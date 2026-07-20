@@ -5,6 +5,7 @@ on:
     paths:
       - "lib/portrait-analysis/**"
       - "lib/portrait-analysis-mlkit/**"
+      - "lib/portrait-analysis-mediapipe/**"
       - "settings.gradle.kts"
       - "gradle/**"
       - ".github/workflows/postac-master-a1.yml"
@@ -14,6 +15,7 @@ on:
     paths:
       - "lib/portrait-analysis/**"
       - "lib/portrait-analysis-mlkit/**"
+      - "lib/portrait-analysis-mediapipe/**"
       - "settings.gradle.kts"
       - "gradle/**"
       - ".github/workflows/postac-master-a1.yml"
@@ -29,7 +31,7 @@ jobs:
   portrait-analysis-tests:
     name: Portrait analysis tests
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
 
     steps:
       - name: Checkout
@@ -57,6 +59,7 @@ jobs:
           ./gradlew \
             :lib:portrait-analysis:assemble \
             :lib:portrait-analysis-mlkit:assemble \
+            :lib:portrait-analysis-mediapipe:assemble \
             --stacktrace \
             --no-daemon 2>&1 | tee ci-assemble.log
 
@@ -67,6 +70,7 @@ jobs:
           ./gradlew \
             :lib:portrait-analysis:test \
             :lib:portrait-analysis-mlkit:test \
+            :lib:portrait-analysis-mediapipe:test \
             --stacktrace \
             --no-daemon 2>&1 | tee ci-tests.log
 
@@ -77,6 +81,7 @@ jobs:
           ./gradlew \
             :lib:portrait-analysis:lint \
             :lib:portrait-analysis-mlkit:lint \
+            :lib:portrait-analysis-mediapipe:lint \
             --stacktrace \
             --no-daemon 2>&1 | tee ci-lint.log
 
@@ -92,3 +97,5 @@ jobs:
             lib/portrait-analysis/build/test-results/**
             lib/portrait-analysis-mlkit/build/reports/**
             lib/portrait-analysis-mlkit/build/test-results/**
+            lib/portrait-analysis-mediapipe/build/reports/**
+            lib/portrait-analysis-mediapipe/build/test-results/**
