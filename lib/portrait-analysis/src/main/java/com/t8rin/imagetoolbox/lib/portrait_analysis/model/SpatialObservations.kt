@@ -65,6 +65,36 @@ data class SemanticMaskObservation(
     }
 }
 
+data class ContourObservation(
+    val id: String,
+    val vertexIds: List<String>,
+    val closed: Boolean,
+    val confidence: Float?,
+    val confidenceSource: ConfidenceSource,
+    val backend: ObservationBackend
+) {
+    init {
+        require(id.isNotBlank()) { "id cannot be blank" }
+        require(vertexIds.isNotEmpty()) { "vertexIds cannot be empty" }
+        require(vertexIds.none { it.isBlank() }) { "vertexIds cannot contain blank ids" }
+        require(vertexIds.distinct().size == vertexIds.size) {
+            "A contour cannot contain duplicate vertex ids"
+        }
+        require(confidence == null || confidence in 0f..1f) {
+            "confidence must be null or in 0f..1f"
+        }
+        require(
+            (confidence == null && confidenceSource == ConfidenceSource.UNAVAILABLE) ||
+                (confidence != null && confidenceSource != ConfidenceSource.UNAVAILABLE)
+        ) {
+            "confidence and confidenceSource must describe the same evidence state"
+        }
+        require(!closed || vertexIds.size >= 3) {
+            "A closed contour requires at least three vertices"
+        }
+    }
+}
+
 data class MeshTriangleObservation(
     val firstVertexId: String,
     val secondVertexId: String,
