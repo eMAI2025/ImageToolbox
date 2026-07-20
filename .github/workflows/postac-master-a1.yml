@@ -50,47 +50,70 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
-      - name: Inspect portrait modules
-        run: >-
-          ./gradlew
-          :lib:portrait-analysis:tasks
-          :lib:portrait-analysis-mlkit:tasks
-          --all
-          --stacktrace
-          --no-daemon
-
       - name: Assemble portrait modules
-        run: >-
-          ./gradlew
-          :lib:portrait-analysis:assemble
-          :lib:portrait-analysis-mlkit:assemble
-          --stacktrace
-          --no-daemon
+        id: assemble
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew \
+            :lib:portrait-analysis:assemble \
+            :lib:portrait-analysis-mlkit:assemble \
+            --stacktrace \
+            --no-daemon 2>&1 | tee ci-assemble.log
 
       - name: Run portrait module unit tests
-        run: >-
-          ./gradlew
-          :lib:portrait-analysis:test
-          :lib:portrait-analysis-mlkit:test
-          --stacktrace
-          --no-daemon
+        id: tests
+        if: steps.assemble.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew \
+            :lib:portrait-analysis:test \
+            :lib:portrait-analysis-mlkit:test \
+            --stacktrace \
+            --no-daemon 2>&1 | tee ci-tests.log
 
       - name: Run portrait module lint
-        run: >-
-          ./gradlew
-          :lib:portrait-analysis:lint
-          :lib:portrait-analysis-mlkit:lint
-          --stacktrace
-          --no-daemon
+        id: lint
+        if: steps.assemble.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew \
+            :lib:portrait-analysis:lint \
+            :lib:portrait-analysis-mlkit:lint \
+            --stacktrace \
+            --no-daemon 2>&1 | tee ci-lint.log
 
-      - name: Upload reports on failure
-        if: failure()
+      - name: Upload CI diagnostics
+        if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: portrait-analysis-reports
-          if-no-files-found: ignore
+          name: portrait-analysis-ci-diagnostics
+          if-no-files-found: warn
           path: |
+            ci-*.log
             lib/portrait-analysis/build/reports/**
             lib/portrait-analysis/build/test-results/**
             lib/portrait-analysis-mlkit/build/reports/**
             lib/portrait-analysis-mlkit/build/test-results/**
+
+      - name: Enforce CI result
+        if: always()
+        shell: bash
+        run: |
+          if [[ "${{ steps.assemble.outcome }}" != "success" ]]; then
+            echo "Assemble failed"
+            exit 1
+          fi
+          if [[ "${{ steps.tests.outcome }}" != "success" ]]; then
+            echo "Tests failed"
+            exit 1
+          fi
+          if [[ "${{ steps.lint.outcome }}" != "success" ]]; then
+            echo "Lint failed"
+            exit 1
+          fi
