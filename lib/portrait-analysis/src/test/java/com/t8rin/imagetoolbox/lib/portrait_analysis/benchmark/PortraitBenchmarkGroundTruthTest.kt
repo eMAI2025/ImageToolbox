@@ -99,6 +99,33 @@ class PortraitBenchmarkGroundTruthTest {
         )
     }
 
+    @Test
+    fun `renders stable compact output`() {
+        val evaluation = PortraitGroundTruthEvaluation(
+            caseId = "BODY_06_STRAIGHT_BACKGROUND",
+            mismatches = listOf(
+                PortraitGroundTruthMismatch(
+                    reason = PortraitGroundTruthMismatchReason.BODY_COUNT_OUT_OF_RANGE,
+                    observedValue = 0,
+                    expectedRange = 1..1
+                ),
+                PortraitGroundTruthMismatch(
+                    reason = PortraitGroundTruthMismatchReason.REQUIRED_REGION_MISSING,
+                    itemId = "waist_contour"
+                )
+            )
+        )
+
+        assertEquals(
+            "case=BODY_06_STRAIGHT_BACKGROUND\n" +
+                "passed=false\n" +
+                "mismatches=2\n" +
+                "BODY_COUNT_OUT_OF_RANGE observed=0 expected=1..1\n" +
+                "REQUIRED_REGION_MISSING:waist_contour\n",
+            PortraitGroundTruthEvaluationRenderer.render(evaluation)
+        )
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun `rejects contradictory parameter expectations`() {
         PortraitBenchmarkGroundTruth(
