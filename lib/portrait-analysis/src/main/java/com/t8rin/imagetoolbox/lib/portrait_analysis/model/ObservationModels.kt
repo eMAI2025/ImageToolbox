@@ -113,11 +113,29 @@ data class SubjectObservation(
     val bodyCount: Int,
     val landmarks: Map<String, LandmarkObservation>,
     val regions: Map<String, RegionObservation>,
-    val pose: PoseObservation = PoseObservation()
+    val pose: PoseObservation = PoseObservation(),
+    val masks: Map<String, SemanticMaskObservation> = emptyMap(),
+    val meshes: Map<String, MeshObservation> = emptyMap()
 ) {
     init {
         require(subjectCount >= 0) { "subjectCount cannot be negative" }
         require(faceCount >= 0) { "faceCount cannot be negative" }
         require(bodyCount >= 0) { "bodyCount cannot be negative" }
+        require(landmarks.keys.all { it.isNotBlank() }) { "landmark keys cannot be blank" }
+        require(regions.keys.all { it.isNotBlank() }) { "region keys cannot be blank" }
+        require(masks.keys.all { it.isNotBlank() }) { "mask keys cannot be blank" }
+        require(meshes.keys.all { it.isNotBlank() }) { "mesh keys cannot be blank" }
+        require(landmarks.all { (id, value) -> id == value.id }) {
+            "landmark map keys must match observation ids"
+        }
+        require(regions.all { (id, value) -> id == value.id }) {
+            "region map keys must match observation ids"
+        }
+        require(masks.all { (id, value) -> id == value.id }) {
+            "mask map keys must match observation ids"
+        }
+        require(meshes.all { (id, value) -> id == value.id }) {
+            "mesh map keys must match observation ids"
+        }
     }
 }
