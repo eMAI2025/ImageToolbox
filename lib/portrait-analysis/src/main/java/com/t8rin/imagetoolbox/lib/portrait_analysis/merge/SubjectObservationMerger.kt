@@ -8,6 +8,7 @@
 
 package com.t8rin.imagetoolbox.lib.portrait_analysis.merge
 
+import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ContourObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.LandmarkObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.MeshObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.PoseObservation
@@ -28,6 +29,7 @@ enum class ObservationMergeConflictType {
     LANDMARK_ID_COLLISION,
     REGION_ID_COLLISION,
     MASK_ID_COLLISION,
+    CONTOUR_ID_COLLISION,
     MESH_ID_COLLISION,
     POSE_YAW_CONFLICT,
     POSE_PITCH_CONFLICT,
@@ -68,6 +70,7 @@ object SubjectObservationMerger {
         val landmarks = linkedMapOf<String, LandmarkObservation>()
         val regions = linkedMapOf<String, RegionObservation>()
         val masks = linkedMapOf<String, SemanticMaskObservation>()
+        val contours = linkedMapOf<String, ContourObservation>()
         val meshes = linkedMapOf<String, MeshObservation>()
 
         observations.forEach { observation ->
@@ -106,6 +109,20 @@ object SubjectObservationMerger {
                     existing == incoming -> Unit
                     else -> conflicts += ObservationMergeConflict(
                         type = ObservationMergeConflictType.MASK_ID_COLLISION,
+                        itemId = id,
+                        existingValue = existing.toString(),
+                        incomingValue = incoming.toString()
+                    )
+                }
+            }
+
+            observation.contours.forEach { (id, incoming) ->
+                val existing = contours[id]
+                when {
+                    existing == null -> contours[id] = incoming
+                    existing == incoming -> Unit
+                    else -> conflicts += ObservationMergeConflict(
+                        type = ObservationMergeConflictType.CONTOUR_ID_COLLISION,
                         itemId = id,
                         existingValue = existing.toString(),
                         incomingValue = incoming.toString()
@@ -162,6 +179,7 @@ object SubjectObservationMerger {
                 rollDegrees = roll
             ),
             masks = masks,
+            contours = contours,
             meshes = meshes
         )
 
