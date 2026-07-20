@@ -1,0 +1,65 @@
+name: POSTAC_MASTER A1 CI
+
+on:
+  pull_request:
+    paths:
+      - "lib/portrait-analysis/**"
+      - "settings.gradle.kts"
+      - "gradle/**"
+      - ".github/workflows/postac-master-a1.yml"
+  push:
+    branches:
+      - "feature/postac-master-a1-benchmark"
+    paths:
+      - "lib/portrait-analysis/**"
+      - "settings.gradle.kts"
+      - "gradle/**"
+      - ".github/workflows/postac-master-a1.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: postac-master-a1-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  portrait-analysis-tests:
+    name: Portrait analysis tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x ./gradlew
+
+      - name: Run unit tests and lint
+        run: >-
+          ./gradlew
+          :lib:portrait-analysis:testDebugUnitTest
+          :lib:portrait-analysis:lintDebug
+          --stacktrace
+          --no-daemon
+
+      - name: Upload reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: portrait-analysis-reports
+          if-no-files-found: ignore
+          path: |
+            lib/portrait-analysis/build/reports/**
+            lib/portrait-analysis/build/test-results/**
