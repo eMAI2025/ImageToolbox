@@ -61,8 +61,10 @@ class MediaPipePoseLandmarkerObservationEngine(
     )
 
     override suspend fun observe(input: MediaPipeImageInput): SubjectObservation =
-        MediaPipePoseObservationMapper.map(
-            snapshot = landmarker.detect(input.image).toSnapshot()
+        MediaPipePoseAliasCatalog.enrichSingleBody(
+            MediaPipePoseObservationMapper.map(
+                snapshot = landmarker.detect(input.image).toSnapshot()
+            )
         )
 
     override fun close() {
