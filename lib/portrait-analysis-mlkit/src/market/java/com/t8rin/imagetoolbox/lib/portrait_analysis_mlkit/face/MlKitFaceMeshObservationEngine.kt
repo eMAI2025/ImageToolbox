@@ -38,6 +38,17 @@ class MlKitFaceMeshObservationEngine(
                                 yPixels = point.position.y,
                                 zPixels = point.position.z
                             )
+                        },
+                        triangles = face.allTriangles.map { triangle ->
+                            val points = triangle.allPoints
+                            require(points.size == 3) {
+                                "ML Kit face mesh triangle must contain exactly three points"
+                            }
+                            MlKitFaceMeshTriangleSnapshot(
+                                firstPointIndex = points[0].index,
+                                secondPointIndex = points[1].index,
+                                thirdPointIndex = points[2].index
+                            )
                         }
                     )
                 }
