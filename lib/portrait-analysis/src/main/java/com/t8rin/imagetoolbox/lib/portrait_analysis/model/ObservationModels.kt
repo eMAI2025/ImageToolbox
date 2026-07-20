@@ -37,6 +37,12 @@ enum class VisibilityState {
     AMBIGUOUS
 }
 
+enum class ConfidenceSource {
+    DIRECT,
+    DERIVED,
+    UNAVAILABLE
+}
+
 enum class ObservationBackend {
     MEDIAPIPE_FACE_LANDMARKER,
     ML_KIT_FACE_MESH,
@@ -50,27 +56,47 @@ enum class ObservationBackend {
 data class LandmarkObservation(
     val id: String,
     val point: NormalizedPoint3D,
-    val confidence: Float,
+    val confidence: Float?,
+    val confidenceSource: ConfidenceSource,
     val visibility: VisibilityState,
     val backend: ObservationBackend
 ) {
     init {
         require(id.isNotBlank()) { "Landmark id cannot be blank" }
-        require(confidence in 0f..1f) { "confidence must be in 0f..1f" }
+        require(confidence == null || confidence in 0f..1f) {
+            "confidence must be null or in 0f..1f"
+        }
+        require(
+            (confidence == null && confidenceSource == ConfidenceSource.UNAVAILABLE) ||
+                (confidence != null && confidenceSource != ConfidenceSource.UNAVAILABLE)
+        ) {
+            "confidence and confidenceSource must describe the same evidence state"
+        }
     }
 }
 
 data class RegionObservation(
     val id: String,
-    val confidence: Float,
-    val occlusion: Float,
+    val confidence: Float?,
+    val confidenceSource: ConfidenceSource,
+    val occlusion: Float?,
     val pixelCoverage: Float,
     val backend: ObservationBackend
 ) {
     init {
         require(id.isNotBlank()) { "Region id cannot be blank" }
-        require(confidence in 0f..1f) { "confidence must be in 0f..1f" }
-        require(occlusion in 0f..1f) { "occlusion must be in 0f..1f" }
+        require(confidence == null || confidence in 0f..1f) {
+            "confidence must be null or in 0f..1f"
+        }
+        require(
+            (confidence == null && confidenceSource == ConfidenceSource.UNAVAILABLE) ||
+                (confidence != null && confidenceSource != ConfidenceSource.UNAVAILABLE)
+        ) {
+            "confidence and confidenceSource must describe the same evidence state"
+        }
+        require(occlusion == null || occlusion in 0f..1f) {
+            "occlusion must be null or in 0f..1f"
+        }
         require(pixelCoverage in 0f..1f) { "pixelCoverage must be in 0f..1f" }
     }
 }
