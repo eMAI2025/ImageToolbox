@@ -27,7 +27,7 @@ jobs:
   portrait-analysis-tests:
     name: Portrait analysis tests
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -46,13 +46,17 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
-      - name: Run unit tests and lint
-        run: >-
-          ./gradlew
-          :lib:portrait-analysis:testDebugUnitTest
-          :lib:portrait-analysis:lintDebug
-          --stacktrace
-          --no-daemon
+      - name: Inspect portrait-analysis tasks
+        run: ./gradlew :lib:portrait-analysis:tasks --all --stacktrace --no-daemon
+
+      - name: Assemble portrait-analysis
+        run: ./gradlew :lib:portrait-analysis:assemble --stacktrace --no-daemon
+
+      - name: Run portrait-analysis unit tests
+        run: ./gradlew :lib:portrait-analysis:test --stacktrace --no-daemon
+
+      - name: Run portrait-analysis lint
+        run: ./gradlew :lib:portrait-analysis:lint --stacktrace --no-daemon
 
       - name: Upload reports on failure
         if: failure()
