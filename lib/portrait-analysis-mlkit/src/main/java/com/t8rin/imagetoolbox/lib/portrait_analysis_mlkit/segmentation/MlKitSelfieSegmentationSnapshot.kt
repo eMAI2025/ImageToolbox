@@ -8,9 +8,11 @@
 
 package com.t8rin.imagetoolbox.lib.portrait_analysis_mlkit.segmentation
 
+import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ConfidenceMask
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ConfidenceSource
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ObservationBackend
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.RegionObservation
+import com.t8rin.imagetoolbox.lib.portrait_analysis.model.SemanticMaskObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.SubjectObservation
 
 data class MlKitSelfieSegmentationSnapshot(
@@ -82,13 +84,23 @@ object MlKitSelfieSegmentationObservationMapper {
             pixelCoverage = coverage,
             backend = ObservationBackend.ML_KIT_SELFIE_SEGMENTATION
         )
+        val mask = SemanticMaskObservation(
+            id = SUBJECT_MASK_REGION_ID,
+            mask = ConfidenceMask(
+                width = snapshot.maskWidth,
+                height = snapshot.maskHeight,
+                confidenceValues = snapshot.personConfidence
+            ),
+            backend = ObservationBackend.ML_KIT_SELFIE_SEGMENTATION
+        )
 
         return SubjectObservation(
             subjectCount = if (subjectDetected) 1 else 0,
             faceCount = 0,
             bodyCount = 0,
             landmarks = emptyMap(),
-            regions = mapOf(SUBJECT_MASK_REGION_ID to region)
+            regions = mapOf(SUBJECT_MASK_REGION_ID to region),
+            masks = mapOf(SUBJECT_MASK_REGION_ID to mask)
         )
     }
 }
