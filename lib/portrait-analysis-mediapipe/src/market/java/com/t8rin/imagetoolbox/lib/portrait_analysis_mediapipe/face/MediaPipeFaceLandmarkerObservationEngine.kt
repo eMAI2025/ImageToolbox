@@ -68,10 +68,12 @@ class MediaPipeFaceLandmarkerObservationEngine(
             .build()
     )
 
-    override suspend fun observe(input: MediaPipeImageInput): SubjectObservation =
-        MediaPipeFaceObservationMapper.map(
+    override suspend fun observe(input: MediaPipeImageInput): SubjectObservation {
+        val rawObservation = MediaPipeFaceObservationMapper.map(
             snapshot = landmarker.detect(input.image).toSnapshot()
         )
+        return MediaPipeFaceAliasCatalog.enrichSingleFace(rawObservation)
+    }
 
     override fun close() {
         landmarker.close()
