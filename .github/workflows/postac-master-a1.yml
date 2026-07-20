@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "lib/portrait-analysis/**"
+      - "lib/portrait-analysis-mlkit/**"
       - "settings.gradle.kts"
       - "gradle/**"
       - ".github/workflows/postac-master-a1.yml"
@@ -12,6 +13,7 @@ on:
       - "feature/postac-master-a1-benchmark"
     paths:
       - "lib/portrait-analysis/**"
+      - "lib/portrait-analysis-mlkit/**"
       - "settings.gradle.kts"
       - "gradle/**"
       - ".github/workflows/postac-master-a1.yml"
@@ -27,43 +29,68 @@ jobs:
   portrait-analysis-tests:
     name: Portrait analysis tests
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
           cache: gradle
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
 
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
-      - name: Inspect portrait-analysis tasks
-        run: ./gradlew :lib:portrait-analysis:tasks --all --stacktrace --no-daemon
+      - name: Inspect portrait modules
+        run: >-
+          ./gradlew
+          :lib:portrait-analysis:tasks
+          :lib:portrait-analysis-mlkit:tasks
+          --all
+          --stacktrace
+          --no-daemon
 
-      - name: Assemble portrait-analysis
-        run: ./gradlew :lib:portrait-analysis:assemble --stacktrace --no-daemon
+      - name: Assemble portrait modules
+        run: >-
+          ./gradlew
+          :lib:portrait-analysis:assemble
+          :lib:portrait-analysis-mlkit:assemble
+          --stacktrace
+          --no-daemon
 
-      - name: Run portrait-analysis unit tests
-        run: ./gradlew :lib:portrait-analysis:test --stacktrace --no-daemon
+      - name: Run portrait module unit tests
+        run: >-
+          ./gradlew
+          :lib:portrait-analysis:test
+          :lib:portrait-analysis-mlkit:test
+          --stacktrace
+          --no-daemon
 
-      - name: Run portrait-analysis lint
-        run: ./gradlew :lib:portrait-analysis:lint --stacktrace --no-daemon
+      - name: Run portrait module lint
+        run: >-
+          ./gradlew
+          :lib:portrait-analysis:lint
+          :lib:portrait-analysis-mlkit:lint
+          --stacktrace
+          --no-daemon
 
       - name: Upload reports on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: portrait-analysis-reports
           if-no-files-found: ignore
           path: |
             lib/portrait-analysis/build/reports/**
             lib/portrait-analysis/build/test-results/**
+            lib/portrait-analysis-mlkit/build/reports/**
+            lib/portrait-analysis-mlkit/build/test-results/**
