@@ -8,6 +8,7 @@
 
 package com.t8rin.imagetoolbox.lib.portrait_analysis.merge
 
+import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ClassificationObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ContourObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.LandmarkObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.MeshObservation
@@ -28,6 +29,7 @@ data class ObservationMergePolicy(
 enum class ObservationMergeConflictType {
     LANDMARK_ID_COLLISION,
     REGION_ID_COLLISION,
+    CLASSIFICATION_ID_COLLISION,
     MASK_ID_COLLISION,
     CONTOUR_ID_COLLISION,
     MESH_ID_COLLISION,
@@ -69,6 +71,7 @@ object SubjectObservationMerger {
         val conflicts = mutableListOf<ObservationMergeConflict>()
         val landmarks = linkedMapOf<String, LandmarkObservation>()
         val regions = linkedMapOf<String, RegionObservation>()
+        val classifications = linkedMapOf<String, ClassificationObservation>()
         val masks = linkedMapOf<String, SemanticMaskObservation>()
         val contours = linkedMapOf<String, ContourObservation>()
         val meshes = linkedMapOf<String, MeshObservation>()
@@ -95,6 +98,20 @@ object SubjectObservationMerger {
                     existing == incoming -> Unit
                     else -> conflicts += ObservationMergeConflict(
                         type = ObservationMergeConflictType.REGION_ID_COLLISION,
+                        itemId = id,
+                        existingValue = existing.toString(),
+                        incomingValue = incoming.toString()
+                    )
+                }
+            }
+
+            observation.classifications.forEach { (id, incoming) ->
+                val existing = classifications[id]
+                when {
+                    existing == null -> classifications[id] = incoming
+                    existing == incoming -> Unit
+                    else -> conflicts += ObservationMergeConflict(
+                        type = ObservationMergeConflictType.CLASSIFICATION_ID_COLLISION,
                         itemId = id,
                         existingValue = existing.toString(),
                         incomingValue = incoming.toString()
@@ -178,6 +195,7 @@ object SubjectObservationMerger {
                 pitchDegrees = pitch,
                 rollDegrees = roll
             ),
+            classifications = classifications,
             masks = masks,
             contours = contours,
             meshes = meshes
