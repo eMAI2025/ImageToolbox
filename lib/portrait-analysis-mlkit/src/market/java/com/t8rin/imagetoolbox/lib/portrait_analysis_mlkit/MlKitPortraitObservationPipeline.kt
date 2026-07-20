@@ -14,6 +14,7 @@ import com.t8rin.imagetoolbox.lib.portrait_analysis.engine.PortraitObservationEn
 import com.t8rin.imagetoolbox.lib.portrait_analysis.engine.SequentialPortraitObservationPipeline
 import com.t8rin.imagetoolbox.lib.portrait_analysis.report.PortraitBenchmarkEvaluation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.report.PortraitBenchmarkReportBuilder
+import com.t8rin.imagetoolbox.lib.portrait_analysis_mlkit.face.MlKitFaceDetectionObservationEngine
 import com.t8rin.imagetoolbox.lib.portrait_analysis_mlkit.face.MlKitFaceMeshObservationEngine
 import com.t8rin.imagetoolbox.lib.portrait_analysis_mlkit.pose.MlKitPoseObservationEngine
 import com.t8rin.imagetoolbox.lib.portrait_analysis_mlkit.segmentation.MlKitSelfieSegmentationObservationEngine
@@ -24,6 +25,8 @@ import com.t8rin.imagetoolbox.lib.portrait_analysis_mlkit.segmentation.MlKitSelf
  * Detectors execute sequentially to provide independent timing and bounded memory pressure.
  */
 class MlKitPortraitObservationPipeline(
+    private val faceDetectionEngine: MlKitFaceDetectionObservationEngine =
+        MlKitFaceDetectionObservationEngine(),
     private val faceMeshEngine: MlKitFaceMeshObservationEngine =
         MlKitFaceMeshObservationEngine(),
     private val poseEngine: MlKitPoseObservationEngine =
@@ -34,6 +37,7 @@ class MlKitPortraitObservationPipeline(
 
     private val pipeline = SequentialPortraitObservationPipeline(
         engines = listOf<PortraitObservationEngine<MlKitImageInput>>(
+            faceDetectionEngine,
             faceMeshEngine,
             poseEngine,
             segmentationEngine
@@ -52,6 +56,7 @@ class MlKitPortraitObservationPipeline(
 
     override fun close() {
         val failures = listOf(
+            runCatching { faceDetectionEngine.close() }.exceptionOrNull(),
             runCatching { faceMeshEngine.close() }.exceptionOrNull(),
             runCatching { poseEngine.close() }.exceptionOrNull(),
             runCatching { segmentationEngine.close() }.exceptionOrNull()
