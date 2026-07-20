@@ -135,6 +135,7 @@ include(":core:crash")
 include(":core:ksp")
 include(":core:utils")
 
+include(":lib:portrait-analysis")
 include(":lib:neural-tools")
 include(":lib:collages")
 include(":lib:ascii")
