@@ -18,7 +18,7 @@ import com.t8rin.imagetoolbox.lib.portrait_analysis.model.VisibilityState
  * Declarative requirements for enabling one edit parameter.
  *
  * A parameter is never enabled by a general "face detected" or "body detected" flag.
- * Every required landmark and semantic region must pass independently.
+ * Every required count, landmark and semantic region must pass independently.
  */
 data class ParameterGateSpec(
     val parameterId: String,
@@ -30,6 +30,10 @@ data class ParameterGateSpec(
     val minimumRegionPixelCoverage: Float = 0f,
     val minimumSubjects: Int = 1,
     val maximumSubjects: Int = 1,
+    val minimumFaces: Int = 0,
+    val maximumFaces: Int = Int.MAX_VALUE,
+    val minimumBodies: Int = 0,
+    val maximumBodies: Int = Int.MAX_VALUE,
     val maximumAbsoluteYawDegrees: Float? = null,
     val maximumAbsolutePitchDegrees: Float? = null,
     val maximumAbsoluteRollDegrees: Float? = null
@@ -42,11 +46,17 @@ data class ParameterGateSpec(
         require(minimumRegionPixelCoverage in 0f..1f)
         require(minimumSubjects >= 0)
         require(maximumSubjects >= minimumSubjects)
+        require(minimumFaces >= 0)
+        require(maximumFaces >= minimumFaces)
+        require(minimumBodies >= 0)
+        require(maximumBodies >= minimumBodies)
     }
 }
 
 enum class GateFailureReason {
     SUBJECT_COUNT_UNSUPPORTED,
+    FACE_COUNT_UNSUPPORTED,
+    BODY_COUNT_UNSUPPORTED,
     LANDMARK_MISSING,
     LANDMARK_CONFIDENCE_UNAVAILABLE,
     LANDMARK_LOW_CONFIDENCE,
@@ -64,7 +74,9 @@ data class GateFailure(
     val reason: GateFailureReason,
     val itemId: String? = null,
     val observedValue: Float? = null,
-    val requiredValue: Float? = null
+    val requiredValue: Float? = null,
+    val requiredMinimumValue: Float? = null,
+    val requiredMaximumValue: Float? = null
 )
 
 sealed interface ParameterGateDecision {
@@ -87,14 +99,27 @@ object ParameterGateEvaluator {
         observation: SubjectObservation
     ): ParameterGateDecision {
         val failures = buildList {
-            if (observation.subjectCount !in spec.minimumSubjects..spec.maximumSubjects) {
-                add(
-                    GateFailure(
-                        reason = GateFailureReason.SUBJECT_COUNT_UNSUPPORTED,
-                        observedValue = observation.subjectCount.toFloat()
-                    )
-                )
-            }
+            validateCount(
+                observed = observation.subjectCount,
+                minimum = spec.minimumSubjects,
+                maximum = spec.maximumSubjects,
+                reason = GateFailureReason.SUBJECT_COUNT_UNSUPPORTED,
+                itemId = "subjects"
+            )?.let(::add)
+            validateCount(
+                observed = observation.faceCount,
+                minimum = spec.minimumFaces,
+                maximum = spec.maximumFaces,
+                reason = GateFailureReason.FACE_COUNT_UNSUPPORTED,
+                itemId = "faces"
+            )?.let(::add)
+            validateCount(
+                observed = observation.bodyCount,
+                minimum = spec.minimumBodies,
+                maximum = spec.maximumBodies,
+                reason = GateFailureReason.BODY_COUNT_UNSUPPORTED,
+                itemId = "bodies"
+            )?.let(::add)
 
             spec.requiredLandmarkIds.forEach { landmarkId ->
                 val landmark = observation.landmarks[landmarkId]
@@ -221,6 +246,24 @@ object ParameterGateEvaluator {
                 failures = failures
             )
         }
+    }
+
+    private fun validateCount(
+        observed: Int,
+        minimum: Int,
+        maximum: Int,
+        reason: GateFailureReason,
+        itemId: String
+    ): GateFailure? = if (observed !in minimum..maximum) {
+        GateFailure(
+            reason = reason,
+            itemId = itemId,
+            observedValue = observed.toFloat(),
+            requiredMinimumValue = minimum.toFloat(),
+            requiredMaximumValue = maximum.toFloat()
+        )
+    } else {
+        null
     }
 
     private fun validatePose(
