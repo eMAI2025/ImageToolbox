@@ -11,6 +11,7 @@ package com.t8rin.imagetoolbox.lib.portrait_analysis_mlkit.face
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ConfidenceSource
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.VisibilityState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -71,5 +72,42 @@ class MlKitFaceMeshObservationMapperTest {
         assertEquals(2, result.faceCount)
         assertTrue(result.landmarks.containsKey("face_0_mesh_0"))
         assertTrue(result.landmarks.containsKey("face_1_mesh_0"))
+    }
+
+    @Test
+    fun `preserves semantic contour order and closure`() {
+        val result = MlKitFaceMeshObservationMapper.map(
+            MlKitFaceMeshSnapshot(
+                imageWidth = 100,
+                imageHeight = 100,
+                faces = listOf(
+                    MlKitFaceSnapshot(
+                        points = listOf(
+                            MlKitFaceMeshPointSnapshot(10, 10f, 10f, 0f),
+                            MlKitFaceMeshPointSnapshot(11, 20f, 10f, 0f),
+                            MlKitFaceMeshPointSnapshot(12, 30f, 10f, 0f)
+                        ),
+                        contours = listOf(
+                            MlKitFaceMeshContourSnapshot(
+                                id = "upper_lip_top",
+                                pointIndices = listOf(12, 10, 11),
+                                closed = false
+                            )
+                        )
+                    )
+                )
+            )
+        )
+
+        val contour = result.contours.getValue(
+            "face_0_mesh_contour_upper_lip_top"
+        )
+        assertEquals(
+            listOf("face_0_mesh_12", "face_0_mesh_10", "face_0_mesh_11"),
+            contour.vertexIds
+        )
+        assertFalse(contour.closed)
+        assertNull(contour.confidence)
+        assertEquals(ConfidenceSource.UNAVAILABLE, contour.confidenceSource)
     }
 }
