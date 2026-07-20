@@ -102,6 +102,17 @@ data class RegionObservation(
     }
 }
 
+data class ClassificationObservation(
+    val id: String,
+    val probability: Float,
+    val backend: ObservationBackend
+) {
+    init {
+        require(id.isNotBlank()) { "Classification id cannot be blank" }
+        require(probability in 0f..1f) { "probability must be in 0f..1f" }
+    }
+}
+
 data class PoseObservation(
     val yawDegrees: Float? = null,
     val pitchDegrees: Float? = null,
@@ -115,6 +126,7 @@ data class SubjectObservation(
     val landmarks: Map<String, LandmarkObservation>,
     val regions: Map<String, RegionObservation>,
     val pose: PoseObservation = PoseObservation(),
+    val classifications: Map<String, ClassificationObservation> = emptyMap(),
     val masks: Map<String, SemanticMaskObservation> = emptyMap(),
     val contours: Map<String, ContourObservation> = emptyMap(),
     val meshes: Map<String, MeshObservation> = emptyMap()
@@ -125,6 +137,9 @@ data class SubjectObservation(
         require(bodyCount >= 0) { "bodyCount cannot be negative" }
         require(landmarks.keys.all { it.isNotBlank() }) { "landmark keys cannot be blank" }
         require(regions.keys.all { it.isNotBlank() }) { "region keys cannot be blank" }
+        require(classifications.keys.all { it.isNotBlank() }) {
+            "classification keys cannot be blank"
+        }
         require(masks.keys.all { it.isNotBlank() }) { "mask keys cannot be blank" }
         require(contours.keys.all { it.isNotBlank() }) { "contour keys cannot be blank" }
         require(meshes.keys.all { it.isNotBlank() }) { "mesh keys cannot be blank" }
@@ -133,6 +148,9 @@ data class SubjectObservation(
         }
         require(regions.all { (id, value) -> id == value.id }) {
             "region map keys must match observation ids"
+        }
+        require(classifications.all { (id, value) -> id == value.id }) {
+            "classification map keys must match observation ids"
         }
         require(masks.all { (id, value) -> id == value.id }) {
             "mask map keys must match observation ids"
