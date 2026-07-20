@@ -9,8 +9,10 @@
 package com.t8rin.imagetoolbox.lib.portrait_analysis.merge
 
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.LandmarkObservation
+import com.t8rin.imagetoolbox.lib.portrait_analysis.model.MeshObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.PoseObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.RegionObservation
+import com.t8rin.imagetoolbox.lib.portrait_analysis.model.SemanticMaskObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.SubjectObservation
 import kotlin.math.abs
 
@@ -25,6 +27,8 @@ data class ObservationMergePolicy(
 enum class ObservationMergeConflictType {
     LANDMARK_ID_COLLISION,
     REGION_ID_COLLISION,
+    MASK_ID_COLLISION,
+    MESH_ID_COLLISION,
     POSE_YAW_CONFLICT,
     POSE_PITCH_CONFLICT,
     POSE_ROLL_CONFLICT
@@ -63,6 +67,8 @@ object SubjectObservationMerger {
         val conflicts = mutableListOf<ObservationMergeConflict>()
         val landmarks = linkedMapOf<String, LandmarkObservation>()
         val regions = linkedMapOf<String, RegionObservation>()
+        val masks = linkedMapOf<String, SemanticMaskObservation>()
+        val meshes = linkedMapOf<String, MeshObservation>()
 
         observations.forEach { observation ->
             observation.landmarks.forEach { (id, incoming) ->
@@ -86,6 +92,34 @@ object SubjectObservationMerger {
                     existing == incoming -> Unit
                     else -> conflicts += ObservationMergeConflict(
                         type = ObservationMergeConflictType.REGION_ID_COLLISION,
+                        itemId = id,
+                        existingValue = existing.toString(),
+                        incomingValue = incoming.toString()
+                    )
+                }
+            }
+
+            observation.masks.forEach { (id, incoming) ->
+                val existing = masks[id]
+                when {
+                    existing == null -> masks[id] = incoming
+                    existing == incoming -> Unit
+                    else -> conflicts += ObservationMergeConflict(
+                        type = ObservationMergeConflictType.MASK_ID_COLLISION,
+                        itemId = id,
+                        existingValue = existing.toString(),
+                        incomingValue = incoming.toString()
+                    )
+                }
+            }
+
+            observation.meshes.forEach { (id, incoming) ->
+                val existing = meshes[id]
+                when {
+                    existing == null -> meshes[id] = incoming
+                    existing == incoming -> Unit
+                    else -> conflicts += ObservationMergeConflict(
+                        type = ObservationMergeConflictType.MESH_ID_COLLISION,
                         itemId = id,
                         existingValue = existing.toString(),
                         incomingValue = incoming.toString()
@@ -126,7 +160,9 @@ object SubjectObservationMerger {
                 yawDegrees = yaw,
                 pitchDegrees = pitch,
                 rollDegrees = roll
-            )
+            ),
+            masks = masks,
+            meshes = meshes
         )
 
         return if (conflicts.isEmpty()) {
