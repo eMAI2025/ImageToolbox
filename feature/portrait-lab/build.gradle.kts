@@ -19,5 +19,8 @@ dependencies {
     implementation(projects.lib.portraitAnalysisMlkit)
     implementation(projects.lib.portraitAnalysisMediapipe)
 
+    "marketImplementation"("com.google.mlkit:face-detection:16.1.7")
+    "marketImplementation"("com.google.mediapipe:tasks-vision:0.10.35")
+
     testImplementation(libs.junit)
 }
