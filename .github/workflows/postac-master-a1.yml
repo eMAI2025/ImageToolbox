@@ -51,8 +51,6 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Assemble portrait modules
-        id: assemble
-        continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
@@ -63,9 +61,6 @@ jobs:
             --no-daemon 2>&1 | tee ci-assemble.log
 
       - name: Run portrait module unit tests
-        id: tests
-        if: steps.assemble.outcome == 'success'
-        continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
@@ -76,9 +71,6 @@ jobs:
             --no-daemon 2>&1 | tee ci-tests.log
 
       - name: Run portrait module lint
-        id: lint
-        if: steps.assemble.outcome == 'success'
-        continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
@@ -100,20 +92,3 @@ jobs:
             lib/portrait-analysis/build/test-results/**
             lib/portrait-analysis-mlkit/build/reports/**
             lib/portrait-analysis-mlkit/build/test-results/**
-
-      - name: Enforce CI result
-        if: always()
-        shell: bash
-        run: |
-          if [[ "${{ steps.assemble.outcome }}" != "success" ]]; then
-            echo "Assemble failed"
-            exit 1
-          fi
-          if [[ "${{ steps.tests.outcome }}" != "success" ]]; then
-            echo "Tests failed"
-            exit 1
-          fi
-          if [[ "${{ steps.lint.outcome }}" != "success" ]]; then
-            echo "Lint failed"
-            exit 1
-          fi
