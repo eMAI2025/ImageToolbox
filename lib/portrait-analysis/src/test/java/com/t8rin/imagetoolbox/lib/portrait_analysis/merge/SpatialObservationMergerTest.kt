@@ -9,11 +9,15 @@
 package com.t8rin.imagetoolbox.lib.portrait_analysis.merge
 
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ConfidenceMask
+import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ConfidenceSource
+import com.t8rin.imagetoolbox.lib.portrait_analysis.model.LandmarkObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.MeshObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.MeshTriangleObservation
+import com.t8rin.imagetoolbox.lib.portrait_analysis.model.NormalizedPoint3D
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ObservationBackend
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.SemanticMaskObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.SubjectObservation
+import com.t8rin.imagetoolbox.lib.portrait_analysis.model.VisibilityState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -37,6 +41,7 @@ class SpatialObservationMergerTest {
         val merged = (result as ObservationMergeResult.Success).observation
         assertEquals(1, merged.masks.size)
         assertEquals(1, merged.meshes.size)
+        assertEquals(setOf("a", "b", "c"), merged.landmarks.keys)
     }
 
     @Test
@@ -84,14 +89,29 @@ class SpatialObservationMergerTest {
     private fun observation(
         masks: Map<String, SemanticMaskObservation> = emptyMap(),
         meshes: Map<String, MeshObservation> = emptyMap()
-    ) = SubjectObservation(
-        subjectCount = 1,
-        faceCount = 0,
-        bodyCount = 0,
-        landmarks = emptyMap(),
-        regions = emptyMap(),
-        masks = masks,
-        meshes = meshes
+    ): SubjectObservation {
+        val landmarks = meshes.values
+            .flatMap { it.vertexIds }
+            .distinct()
+            .associateWith(::landmark)
+        return SubjectObservation(
+            subjectCount = 1,
+            faceCount = 0,
+            bodyCount = 0,
+            landmarks = landmarks,
+            regions = emptyMap(),
+            masks = masks,
+            meshes = meshes
+        )
+    }
+
+    private fun landmark(id: String) = LandmarkObservation(
+        id = id,
+        point = NormalizedPoint3D(0.5f, 0.5f),
+        confidence = null,
+        confidenceSource = ConfidenceSource.UNAVAILABLE,
+        visibility = VisibilityState.VISIBLE,
+        backend = ObservationBackend.ML_KIT_FACE_MESH
     )
 
     private fun mask(values: FloatArray) = SemanticMaskObservation(
