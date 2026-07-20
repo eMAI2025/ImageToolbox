@@ -10,6 +10,8 @@ package com.t8rin.imagetoolbox.lib.portrait_analysis_mlkit.face
 
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ConfidenceSource
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.LandmarkObservation
+import com.t8rin.imagetoolbox.lib.portrait_analysis.model.MeshObservation
+import com.t8rin.imagetoolbox.lib.portrait_analysis.model.MeshTriangleObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.NormalizedPoint3D
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ObservationBackend
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.RegionObservation
@@ -22,11 +24,54 @@ data class MlKitFaceMeshPointSnapshot(
     val xPixels: Float,
     val yPixels: Float,
     val zPixels: Float
-)
+) {
+    init {
+        require(index >= 0) { "index cannot be negative" }
+        require(xPixels.isFinite()) { "xPixels must be finite" }
+        require(yPixels.isFinite()) { "yPixels must be finite" }
+        require(zPixels.isFinite()) { "zPixels must be finite" }
+    }
+}
+
+data class MlKitFaceMeshTriangleSnapshot(
+    val firstPointIndex: Int,
+    val secondPointIndex: Int,
+    val thirdPointIndex: Int
+) {
+    init {
+        require(
+            setOf(firstPointIndex, secondPointIndex, thirdPointIndex).size == 3
+        ) {
+            "A triangle must reference three different point indices"
+        }
+        require(firstPointIndex >= 0)
+        require(secondPointIndex >= 0)
+        require(thirdPointIndex >= 0)
+    }
+
+    val pointIndices: Set<Int>
+        get() = setOf(firstPointIndex, secondPointIndex, thirdPointIndex)
+}
 
 data class MlKitFaceSnapshot(
-    val points: List<MlKitFaceMeshPointSnapshot>
-)
+    val points: List<MlKitFaceMeshPointSnapshot>,
+    val triangles: List<MlKitFaceMeshTriangleSnapshot> = emptyList()
+) {
+    init {
+        val pointIndices = points.map { it.index }
+        require(pointIndices.distinct().size == pointIndices.size) {
+            "Face mesh point indices must be unique"
+        }
+        val unknownIndices = triangles
+            .flatMap { it.pointIndices }
+            .filterNot { it in pointIndices }
+            .distinct()
+            .sorted()
+        require(unknownIndices.isEmpty()) {
+            "Triangles reference unknown face mesh points: ${unknownIndices.joinToString()}"
+        }
+    }
+}
 
 data class MlKitFaceMeshSnapshot(
     val imageWidth: Int,
@@ -54,10 +99,11 @@ object MlKitFaceMeshObservationMapper {
                 face.points.forEach { point ->
                     val x = point.xPixels / snapshot.imageWidth
                     val y = point.yPixels / snapshot.imageHeight
+                    val pointId = rawPointId(faceIndex, point.index)
                     put(
-                        rawPointId(faceIndex, point.index),
+                        pointId,
                         LandmarkObservation(
-                            id = rawPointId(faceIndex, point.index),
+                            id = pointId,
                             point = NormalizedPoint3D(
                                 x = x,
                                 y = y,
@@ -103,12 +149,40 @@ object MlKitFaceMeshObservationMapper {
             }
         }
 
+        val meshes = buildMap {
+            snapshot.faces.forEachIndexed { faceIndex, face ->
+                if (face.points.isNotEmpty()) {
+                    val meshId = rawMeshId(faceIndex)
+                    val vertexIds = face.points
+                        .map { rawPointId(faceIndex, it.index) }
+                        .toSet()
+                    val triangles = face.triangles.map { triangle ->
+                        MeshTriangleObservation(
+                            firstVertexId = rawPointId(faceIndex, triangle.firstPointIndex),
+                            secondVertexId = rawPointId(faceIndex, triangle.secondPointIndex),
+                            thirdVertexId = rawPointId(faceIndex, triangle.thirdPointIndex)
+                        )
+                    }
+                    put(
+                        meshId,
+                        MeshObservation(
+                            id = meshId,
+                            vertexIds = vertexIds,
+                            triangles = triangles,
+                            backend = ObservationBackend.ML_KIT_FACE_MESH
+                        )
+                    )
+                }
+            }
+        }
+
         return SubjectObservation(
             subjectCount = snapshot.faces.size,
             faceCount = snapshot.faces.size,
             bodyCount = 0,
             landmarks = landmarks,
-            regions = regions
+            regions = regions,
+            meshes = meshes
         )
     }
 
@@ -116,6 +190,8 @@ object MlKitFaceMeshObservationMapper {
         "face_${faceIndex}_mesh_$pointIndex"
 
     fun rawRegionId(faceIndex: Int): String = "face_${faceIndex}_mesh_region"
+
+    fun rawMeshId(faceIndex: Int): String = "face_${faceIndex}_mesh"
 
     private fun visibilityFor(x: Float, y: Float): VisibilityState = when {
         x in 0f..1f && y in 0f..1f -> VisibilityState.VISIBLE
