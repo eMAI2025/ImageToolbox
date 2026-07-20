@@ -8,6 +8,7 @@
 
 package com.t8rin.imagetoolbox.lib.portrait_analysis.gate
 
+import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ConfidenceSource
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.LandmarkObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.NormalizedPoint3D
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ObservationBackend
@@ -67,6 +68,31 @@ class ParameterGateEvaluatorTest {
     }
 
     @Test
+    fun `unavailable landmark confidence disables strict parameter`() {
+        val observation = validObservation().let {
+            it.copy(
+                landmarks = it.landmarks + (
+                    "mouth_right_corner" to it.landmarks.getValue("mouth_right_corner").copy(
+                        confidence = null,
+                        confidenceSource = ConfidenceSource.UNAVAILABLE
+                    )
+                )
+            )
+        }
+
+        val decision = ParameterGateEvaluator.evaluate(mouthCornerSpec, observation)
+
+        assertTrue(decision is ParameterGateDecision.Disabled)
+        val failures = (decision as ParameterGateDecision.Disabled).failures
+        assertTrue(
+            failures.any {
+                it.reason == GateFailureReason.LANDMARK_CONFIDENCE_UNAVAILABLE &&
+                    it.itemId == "mouth_right_corner"
+            }
+        )
+    }
+
+    @Test
     fun `occluded region disables only the affected parameter`() {
         val observation = validObservation().let {
             it.copy(
@@ -83,6 +109,30 @@ class ParameterGateEvaluatorTest {
         assertTrue(decision is ParameterGateDecision.Disabled)
         val failures = (decision as ParameterGateDecision.Disabled).failures
         assertTrue(failures.any { it.reason == GateFailureReason.REGION_OCCLUDED })
+    }
+
+    @Test
+    fun `unavailable region occlusion disables strict parameter`() {
+        val observation = validObservation().let {
+            it.copy(
+                regions = it.regions + (
+                    "lips_occlusion_mask" to it.regions.getValue("lips_occlusion_mask").copy(
+                        occlusion = null
+                    )
+                )
+            )
+        }
+
+        val decision = ParameterGateEvaluator.evaluate(mouthCornerSpec, observation)
+
+        assertTrue(decision is ParameterGateDecision.Disabled)
+        val failures = (decision as ParameterGateDecision.Disabled).failures
+        assertTrue(
+            failures.any {
+                it.reason == GateFailureReason.REGION_OCCLUSION_UNAVAILABLE &&
+                    it.itemId == "lips_occlusion_mask"
+            }
+        )
     }
 
     @Test
@@ -105,6 +155,7 @@ class ParameterGateEvaluatorTest {
                 id = id,
                 point = NormalizedPoint3D(x = 0.5f, y = 0.5f),
                 confidence = 0.98f,
+                confidenceSource = ConfidenceSource.DIRECT,
                 visibility = VisibilityState.VISIBLE,
                 backend = ObservationBackend.ML_KIT_FACE_MESH
             )
@@ -113,6 +164,7 @@ class ParameterGateEvaluatorTest {
             "mouth_region" to RegionObservation(
                 id = "mouth_region",
                 confidence = 0.98f,
+                confidenceSource = ConfidenceSource.DIRECT,
                 occlusion = 0.02f,
                 pixelCoverage = 0.02f,
                 backend = ObservationBackend.ML_KIT_FACE_MESH
@@ -120,6 +172,7 @@ class ParameterGateEvaluatorTest {
             "lips_occlusion_mask" to RegionObservation(
                 id = "lips_occlusion_mask",
                 confidence = 0.96f,
+                confidenceSource = ConfidenceSource.DIRECT,
                 occlusion = 0.02f,
                 pixelCoverage = 0.02f,
                 backend = ObservationBackend.ML_KIT_FACE_MESH
