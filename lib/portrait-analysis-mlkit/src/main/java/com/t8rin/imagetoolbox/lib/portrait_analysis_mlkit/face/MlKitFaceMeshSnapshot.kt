@@ -9,6 +9,7 @@
 package com.t8rin.imagetoolbox.lib.portrait_analysis_mlkit.face
 
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ConfidenceSource
+import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ContourObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.LandmarkObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.MeshObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.MeshTriangleObservation
@@ -53,22 +54,47 @@ data class MlKitFaceMeshTriangleSnapshot(
         get() = setOf(firstPointIndex, secondPointIndex, thirdPointIndex)
 }
 
+data class MlKitFaceMeshContourSnapshot(
+    val id: String,
+    val pointIndices: List<Int>,
+    val closed: Boolean
+) {
+    init {
+        require(id.isNotBlank()) { "id cannot be blank" }
+        require(pointIndices.isNotEmpty()) { "pointIndices cannot be empty" }
+        require(pointIndices.all { it >= 0 }) { "pointIndices cannot contain negative values" }
+        require(pointIndices.distinct().size == pointIndices.size) {
+            "A contour cannot contain duplicate point indices"
+        }
+        require(!closed || pointIndices.size >= 3) {
+            "A closed contour requires at least three points"
+        }
+    }
+}
+
 data class MlKitFaceSnapshot(
     val points: List<MlKitFaceMeshPointSnapshot>,
-    val triangles: List<MlKitFaceMeshTriangleSnapshot> = emptyList()
+    val triangles: List<MlKitFaceMeshTriangleSnapshot> = emptyList(),
+    val contours: List<MlKitFaceMeshContourSnapshot> = emptyList()
 ) {
     init {
         val pointIndices = points.map { it.index }
         require(pointIndices.distinct().size == pointIndices.size) {
             "Face mesh point indices must be unique"
         }
-        val unknownIndices = triangles
-            .flatMap { it.pointIndices }
+        val referencedIndices = buildList {
+            triangles.forEach { addAll(it.pointIndices) }
+            contours.forEach { addAll(it.pointIndices) }
+        }
+        val unknownIndices = referencedIndices
             .filterNot { it in pointIndices }
             .distinct()
             .sorted()
         require(unknownIndices.isEmpty()) {
-            "Triangles reference unknown face mesh points: ${unknownIndices.joinToString()}"
+            "Face topology references unknown mesh points: ${unknownIndices.joinToString()}"
+        }
+        require(contours.map { it.id }.distinct().size == contours.size) {
+            "Face contour ids must be unique"
         }
     }
 }
@@ -149,6 +175,27 @@ object MlKitFaceMeshObservationMapper {
             }
         }
 
+        val contours = buildMap {
+            snapshot.faces.forEachIndexed { faceIndex, face ->
+                face.contours.forEach { contour ->
+                    val contourId = rawContourId(faceIndex, contour.id)
+                    put(
+                        contourId,
+                        ContourObservation(
+                            id = contourId,
+                            vertexIds = contour.pointIndices.map {
+                                rawPointId(faceIndex, it)
+                            },
+                            closed = contour.closed,
+                            confidence = null,
+                            confidenceSource = ConfidenceSource.UNAVAILABLE,
+                            backend = ObservationBackend.ML_KIT_FACE_MESH
+                        )
+                    )
+                }
+            }
+        }
+
         val meshes = buildMap {
             snapshot.faces.forEachIndexed { faceIndex, face ->
                 if (face.points.isNotEmpty()) {
@@ -182,6 +229,7 @@ object MlKitFaceMeshObservationMapper {
             bodyCount = 0,
             landmarks = landmarks,
             regions = regions,
+            contours = contours,
             meshes = meshes
         )
     }
@@ -190,6 +238,9 @@ object MlKitFaceMeshObservationMapper {
         "face_${faceIndex}_mesh_$pointIndex"
 
     fun rawRegionId(faceIndex: Int): String = "face_${faceIndex}_mesh_region"
+
+    fun rawContourId(faceIndex: Int, contourId: String): String =
+        "face_${faceIndex}_mesh_contour_$contourId"
 
     fun rawMeshId(faceIndex: Int): String = "face_${faceIndex}_mesh"
 
