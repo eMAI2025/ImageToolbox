@@ -21,11 +21,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -66,6 +67,7 @@ private sealed interface PortraitLabUiState {
     data class Failed(val message: String) : PortraitLabUiState
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PortraitLabContent(
     onGoBack: (() -> Unit)? = null
@@ -100,8 +102,8 @@ fun PortraitLabContent(
                     }
                 },
                 navigationIcon = {
-                    if (onGoBack != null) {
-                        TextButton(onClick = onGoBack) {
+                    onGoBack?.let { callback ->
+                        TextButton(onClick = callback) {
                             Text("Back")
                         }
                     }
@@ -116,9 +118,7 @@ fun PortraitLabContent(
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            item {
-                BackendAvailabilityCard(runner.availability)
-            }
+            item { BackendAvailabilityCard(runner.availability) }
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -190,9 +190,7 @@ fun PortraitLabContent(
                             scene = current.output.overlayScene
                         )
                     }
-                    item {
-                        ResultSummaryCard(current.output)
-                    }
+                    item { ResultSummaryCard(current.output) }
                     if (current.output.warnings.isNotEmpty()) {
                         item {
                             ReportCard(
@@ -241,9 +239,7 @@ fun PortraitLabContent(
 }
 
 @Composable
-private fun BackendAvailabilityCard(
-    items: List<PortraitBackendAvailability>
-) {
+private fun BackendAvailabilityCard(items: List<PortraitBackendAvailability>) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -324,10 +320,7 @@ private fun PortraitOverlayPreview(
                 .fillMaxWidth()
                 .heightIn(min = 260.dp, max = 560.dp)
         ) {
-            val scale = minOf(
-                size.width / image.width,
-                size.height / image.height
-            )
+            val scale = minOf(size.width / image.width, size.height / image.height)
             val drawWidth = image.width * scale
             val drawHeight = image.height * scale
             val left = (size.width - drawWidth) / 2f
@@ -359,11 +352,7 @@ private fun PortraitOverlayPreview(
                     if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
                 }
                 if (polyline.closed) path.close()
-                drawPath(
-                    path = path,
-                    color = secondary,
-                    style = Stroke(width = 2f)
-                )
+                drawPath(path, secondary, style = Stroke(width = 2f))
             }
             scene.points.forEach { point ->
                 drawCircle(
