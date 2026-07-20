@@ -24,9 +24,9 @@ data class ParameterGateSpec(
     val parameterId: String,
     val requiredLandmarkIds: Set<String> = emptySet(),
     val requiredRegionIds: Set<String> = emptySet(),
-    val minimumLandmarkConfidence: Float = 0.90f,
-    val minimumRegionConfidence: Float = 0.90f,
-    val maximumRegionOcclusion: Float = 0.15f,
+    val minimumLandmarkConfidence: Float? = 0.90f,
+    val minimumRegionConfidence: Float? = 0.90f,
+    val maximumRegionOcclusion: Float? = 0.15f,
     val minimumRegionPixelCoverage: Float = 0f,
     val minimumSubjects: Int = 1,
     val maximumSubjects: Int = 1,
@@ -36,9 +36,9 @@ data class ParameterGateSpec(
 ) {
     init {
         require(parameterId.isNotBlank()) { "parameterId cannot be blank" }
-        require(minimumLandmarkConfidence in 0f..1f)
-        require(minimumRegionConfidence in 0f..1f)
-        require(maximumRegionOcclusion in 0f..1f)
+        require(minimumLandmarkConfidence == null || minimumLandmarkConfidence in 0f..1f)
+        require(minimumRegionConfidence == null || minimumRegionConfidence in 0f..1f)
+        require(maximumRegionOcclusion == null || maximumRegionOcclusion in 0f..1f)
         require(minimumRegionPixelCoverage in 0f..1f)
         require(minimumSubjects >= 0)
         require(maximumSubjects >= minimumSubjects)
@@ -48,10 +48,13 @@ data class ParameterGateSpec(
 enum class GateFailureReason {
     SUBJECT_COUNT_UNSUPPORTED,
     LANDMARK_MISSING,
+    LANDMARK_CONFIDENCE_UNAVAILABLE,
     LANDMARK_LOW_CONFIDENCE,
     LANDMARK_NOT_VISIBLE,
     REGION_MISSING,
+    REGION_CONFIDENCE_UNAVAILABLE,
     REGION_LOW_CONFIDENCE,
+    REGION_OCCLUSION_UNAVAILABLE,
     REGION_OCCLUDED,
     REGION_TOO_SMALL,
     POSE_UNSUPPORTED
@@ -95,6 +98,7 @@ object ParameterGateEvaluator {
 
             spec.requiredLandmarkIds.forEach { landmarkId ->
                 val landmark = observation.landmarks[landmarkId]
+                val confidenceThreshold = spec.minimumLandmarkConfidence
                 when {
                     landmark == null -> add(
                         GateFailure(
@@ -103,12 +107,22 @@ object ParameterGateEvaluator {
                         )
                     )
 
-                    landmark.confidence < spec.minimumLandmarkConfidence -> add(
+                    confidenceThreshold != null && landmark.confidence == null -> add(
+                        GateFailure(
+                            reason = GateFailureReason.LANDMARK_CONFIDENCE_UNAVAILABLE,
+                            itemId = landmarkId,
+                            requiredValue = confidenceThreshold
+                        )
+                    )
+
+                    confidenceThreshold != null &&
+                        landmark.confidence != null &&
+                        landmark.confidence < confidenceThreshold -> add(
                         GateFailure(
                             reason = GateFailureReason.LANDMARK_LOW_CONFIDENCE,
                             itemId = landmarkId,
                             observedValue = landmark.confidence,
-                            requiredValue = spec.minimumLandmarkConfidence
+                            requiredValue = confidenceThreshold
                         )
                     )
 
@@ -123,6 +137,8 @@ object ParameterGateEvaluator {
 
             spec.requiredRegionIds.forEach { regionId ->
                 val region = observation.regions[regionId]
+                val confidenceThreshold = spec.minimumRegionConfidence
+                val occlusionThreshold = spec.maximumRegionOcclusion
                 when {
                     region == null -> add(
                         GateFailure(
@@ -131,21 +147,41 @@ object ParameterGateEvaluator {
                         )
                     )
 
-                    region.confidence < spec.minimumRegionConfidence -> add(
+                    confidenceThreshold != null && region.confidence == null -> add(
+                        GateFailure(
+                            reason = GateFailureReason.REGION_CONFIDENCE_UNAVAILABLE,
+                            itemId = regionId,
+                            requiredValue = confidenceThreshold
+                        )
+                    )
+
+                    confidenceThreshold != null &&
+                        region.confidence != null &&
+                        region.confidence < confidenceThreshold -> add(
                         GateFailure(
                             reason = GateFailureReason.REGION_LOW_CONFIDENCE,
                             itemId = regionId,
                             observedValue = region.confidence,
-                            requiredValue = spec.minimumRegionConfidence
+                            requiredValue = confidenceThreshold
                         )
                     )
 
-                    region.occlusion > spec.maximumRegionOcclusion -> add(
+                    occlusionThreshold != null && region.occlusion == null -> add(
+                        GateFailure(
+                            reason = GateFailureReason.REGION_OCCLUSION_UNAVAILABLE,
+                            itemId = regionId,
+                            requiredValue = occlusionThreshold
+                        )
+                    )
+
+                    occlusionThreshold != null &&
+                        region.occlusion != null &&
+                        region.occlusion > occlusionThreshold -> add(
                         GateFailure(
                             reason = GateFailureReason.REGION_OCCLUDED,
                             itemId = regionId,
                             observedValue = region.occlusion,
-                            requiredValue = spec.maximumRegionOcclusion
+                            requiredValue = occlusionThreshold
                         )
                     )
 
