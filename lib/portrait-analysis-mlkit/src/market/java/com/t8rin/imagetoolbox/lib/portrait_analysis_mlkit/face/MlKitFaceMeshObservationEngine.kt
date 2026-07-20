@@ -10,7 +10,6 @@ package com.t8rin.imagetoolbox.lib.portrait_analysis_mlkit.face
 
 import com.google.mlkit.vision.facemesh.FaceMeshDetection
 import com.google.mlkit.vision.facemesh.FaceMeshDetector
-import com.google.mlkit.vision.facemesh.FaceMeshDetectorOptions
 import com.t8rin.imagetoolbox.lib.portrait_analysis.engine.PortraitObservationEngine
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ObservationBackend
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.SubjectObservation
@@ -19,9 +18,7 @@ import com.t8rin.imagetoolbox.lib.portrait_analysis_mlkit.awaitResult
 
 /** Observation-only ML Kit Face Mesh backend for the Market build. */
 class MlKitFaceMeshObservationEngine(
-    private val detector: FaceMeshDetector = FaceMeshDetection.getClient(
-        FaceMeshDetectorOptions.DEFAULT_OPTIONS
-    )
+    private val detector: FaceMeshDetector = FaceMeshDetection.getClient()
 ) : PortraitObservationEngine<MlKitImageInput>, AutoCloseable {
 
     override val backend: ObservationBackend = ObservationBackend.ML_KIT_FACE_MESH
