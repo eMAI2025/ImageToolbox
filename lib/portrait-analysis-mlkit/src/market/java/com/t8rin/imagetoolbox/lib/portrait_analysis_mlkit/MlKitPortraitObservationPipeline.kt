@@ -9,6 +9,8 @@
 package com.t8rin.imagetoolbox.lib.portrait_analysis_mlkit
 
 import com.t8rin.imagetoolbox.lib.portrait_analysis.catalog.DefaultPortraitParameterCatalog
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodySilhouetteEnricher
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodySilhouetteEnrichmentResult
 import com.t8rin.imagetoolbox.lib.portrait_analysis.engine.ObservationPipelineResult
 import com.t8rin.imagetoolbox.lib.portrait_analysis.engine.PortraitObservationEngine
 import com.t8rin.imagetoolbox.lib.portrait_analysis.engine.SequentialPortraitObservationPipeline
@@ -18,6 +20,11 @@ import com.t8rin.imagetoolbox.lib.portrait_analysis_mlkit.face.MlKitFaceDetectio
 import com.t8rin.imagetoolbox.lib.portrait_analysis_mlkit.face.MlKitFaceMeshObservationEngine
 import com.t8rin.imagetoolbox.lib.portrait_analysis_mlkit.pose.MlKitPoseObservationEngine
 import com.t8rin.imagetoolbox.lib.portrait_analysis_mlkit.segmentation.MlKitSelfieSegmentationObservationEngine
+
+data class MlKitPortraitBenchmarkResult(
+    val evaluation: PortraitBenchmarkEvaluation,
+    val bodySilhouetteEnrichment: BodySilhouetteEnrichmentResult?
+)
 
 /**
  * Market-build observation pipeline using only on-device ML Kit detectors.
@@ -49,10 +56,35 @@ class MlKitPortraitObservationPipeline(
 
     suspend fun observeAndBuildReport(
         input: MlKitImageInput
-    ): PortraitBenchmarkEvaluation = PortraitBenchmarkReportBuilder.build(
-        pipelineResult = observe(input),
-        gateSpecs = DefaultPortraitParameterCatalog.gateSpecs
-    )
+    ): PortraitBenchmarkEvaluation = observeAndBuildDetailedReport(input).evaluation
+
+    suspend fun observeAndBuildDetailedReport(
+        input: MlKitImageInput
+    ): MlKitPortraitBenchmarkResult {
+        val rawResult = observe(input)
+        val enrichment = when (rawResult) {
+            is ObservationPipelineResult.Success -> BodySilhouetteEnricher.enrich(
+                rawResult.observation
+            )
+
+            is ObservationPipelineResult.BackendFailure,
+            is ObservationPipelineResult.MergeConflict -> null
+        }
+        val resultForReport = if (
+            rawResult is ObservationPipelineResult.Success && enrichment != null
+        ) {
+            rawResult.copy(observation = enrichment.observation)
+        } else {
+            rawResult
+        }
+        return MlKitPortraitBenchmarkResult(
+            evaluation = PortraitBenchmarkReportBuilder.build(
+                pipelineResult = resultForReport,
+                gateSpecs = DefaultPortraitParameterCatalog.gateSpecs
+            ),
+            bodySilhouetteEnrichment = enrichment
+        )
+    }
 
     override fun close() {
         val failures = listOf(
