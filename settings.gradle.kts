@@ -137,6 +137,7 @@ include(":core:utils")
 
 include(":lib:portrait-analysis")
 include(":lib:portrait-analysis-mlkit")
+include(":lib:portrait-analysis-mediapipe")
 include(":lib:neural-tools")
 include(":lib:collages")
 include(":lib:ascii")
