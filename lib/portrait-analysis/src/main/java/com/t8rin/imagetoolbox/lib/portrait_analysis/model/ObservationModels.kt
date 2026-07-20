@@ -46,6 +46,7 @@ enum class ConfidenceSource {
 enum class ObservationBackend {
     MEDIAPIPE_FACE_LANDMARKER,
     ML_KIT_FACE_MESH,
+    ML_KIT_FACE_DETECTION,
     MEDIAPIPE_POSE,
     ML_KIT_POSE,
     ML_KIT_SELFIE_SEGMENTATION,
@@ -115,6 +116,7 @@ data class SubjectObservation(
     val regions: Map<String, RegionObservation>,
     val pose: PoseObservation = PoseObservation(),
     val masks: Map<String, SemanticMaskObservation> = emptyMap(),
+    val contours: Map<String, ContourObservation> = emptyMap(),
     val meshes: Map<String, MeshObservation> = emptyMap()
 ) {
     init {
@@ -124,6 +126,7 @@ data class SubjectObservation(
         require(landmarks.keys.all { it.isNotBlank() }) { "landmark keys cannot be blank" }
         require(regions.keys.all { it.isNotBlank() }) { "region keys cannot be blank" }
         require(masks.keys.all { it.isNotBlank() }) { "mask keys cannot be blank" }
+        require(contours.keys.all { it.isNotBlank() }) { "contour keys cannot be blank" }
         require(meshes.keys.all { it.isNotBlank() }) { "mesh keys cannot be blank" }
         require(landmarks.all { (id, value) -> id == value.id }) {
             "landmark map keys must match observation ids"
@@ -134,8 +137,29 @@ data class SubjectObservation(
         require(masks.all { (id, value) -> id == value.id }) {
             "mask map keys must match observation ids"
         }
+        require(contours.all { (id, value) -> id == value.id }) {
+            "contour map keys must match observation ids"
+        }
         require(meshes.all { (id, value) -> id == value.id }) {
             "mesh map keys must match observation ids"
+        }
+
+        val unknownContourVertexIds = contours.values
+            .flatMap { it.vertexIds }
+            .filterNot { it in landmarks }
+            .distinct()
+            .sorted()
+        require(unknownContourVertexIds.isEmpty()) {
+            "Contours reference unknown landmarks: ${unknownContourVertexIds.joinToString()}"
+        }
+
+        val unknownMeshVertexIds = meshes.values
+            .flatMap { it.vertexIds }
+            .filterNot { it in landmarks }
+            .distinct()
+            .sorted()
+        require(unknownMeshVertexIds.isEmpty()) {
+            "Meshes reference unknown landmarks: ${unknownMeshVertexIds.joinToString()}"
         }
     }
 }
