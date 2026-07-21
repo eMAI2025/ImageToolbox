@@ -20,7 +20,6 @@ import com.t8rin.imagetoolbox.lib.portrait_analysis.engine.ObservationPipelineRe
 import com.t8rin.imagetoolbox.lib.portrait_analysis.engine.PortraitObservationEngine
 import com.t8rin.imagetoolbox.lib.portrait_analysis.engine.SequentialPortraitObservationPipeline
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ObservationBackend
-import com.t8rin.imagetoolbox.lib.portrait_analysis.model.SubjectObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.overlay.PortraitOverlaySceneBuilder
 import com.t8rin.imagetoolbox.lib.portrait_analysis.report.ParameterGateReportBuilder
 import com.t8rin.imagetoolbox.lib.portrait_analysis.report.PortraitBackendComparisonReportBuilder
@@ -112,51 +111,46 @@ private class MarketPortraitLabRunner(
         val backendResults = try {
             when (backend) {
                 ObservationBackend.ML_KIT_FACE_DETECTION -> runMlKit(
-                    engine = MlKitFaceDetectionObservationEngine(),
-                    bitmap = decoded.orientedBitmap,
-                    repeatedRuns = repeatedRuns,
-                    warnings = warnings,
-                    runtimeLog = runtimeLog
+                    MlKitFaceDetectionObservationEngine(),
+                    decoded.orientedBitmap,
+                    repeatedRuns,
+                    warnings,
+                    runtimeLog
                 )
-
                 ObservationBackend.ML_KIT_POSE -> runMlKit(
-                    engine = MlKitPoseObservationEngine(),
-                    bitmap = decoded.orientedBitmap,
-                    repeatedRuns = repeatedRuns,
-                    warnings = warnings,
-                    runtimeLog = runtimeLog
+                    MlKitPoseObservationEngine(),
+                    decoded.orientedBitmap,
+                    repeatedRuns,
+                    warnings,
+                    runtimeLog
                 )
-
                 ObservationBackend.ML_KIT_SELFIE_SEGMENTATION -> runMlKit(
-                    engine = MlKitSelfieSegmentationObservationEngine(),
-                    bitmap = decoded.orientedBitmap,
-                    repeatedRuns = repeatedRuns,
-                    warnings = warnings,
-                    runtimeLog = runtimeLog
+                    MlKitSelfieSegmentationObservationEngine(),
+                    decoded.orientedBitmap,
+                    repeatedRuns,
+                    warnings,
+                    runtimeLog
                 )
-
                 ObservationBackend.MEDIAPIPE_FACE_LANDMARKER -> runMediaPipe(
-                    engine = MediaPipeFaceLandmarkerObservationEngine(
+                    MediaPipeFaceLandmarkerObservationEngine(
                         context,
                         MediaPipeFaceLandmarkerConfig(FACE_MODEL_ASSET)
                     ),
-                    bitmap = decoded.orientedBitmap,
-                    repeatedRuns = repeatedRuns,
-                    warnings = warnings,
-                    runtimeLog = runtimeLog
+                    decoded.orientedBitmap,
+                    repeatedRuns,
+                    warnings,
+                    runtimeLog
                 )
-
                 ObservationBackend.MEDIAPIPE_POSE -> runMediaPipe(
-                    engine = MediaPipePoseLandmarkerObservationEngine(
+                    MediaPipePoseLandmarkerObservationEngine(
                         context,
                         MediaPipePoseLandmarkerConfig(POSE_MODEL_ASSET)
                     ),
-                    bitmap = decoded.orientedBitmap,
-                    repeatedRuns = repeatedRuns,
-                    warnings = warnings,
-                    runtimeLog = runtimeLog
+                    decoded.orientedBitmap,
+                    repeatedRuns,
+                    warnings,
+                    runtimeLog
                 )
-
                 else -> return PortraitLabRunResult.Failure(
                     "Backend ${backend.name} is blocked in P1 visual proof"
                 )
@@ -171,9 +165,7 @@ private class MarketPortraitLabRunner(
             return PortraitLabRunResult.Failure("Backend produced no benchmark result")
         }
 
-        val observation = backendResults
-            .minBy { it.measurement.repeatedRunIndex }
-            .observation
+        val observation = backendResults.minBy { it.measurement.repeatedRunIndex }.observation
         val visualProof = VisualProofEvaluator.evaluate(observation)
         runtimeLog += "visual_status=${visualProof.status.name}"
         runtimeLog += "face_count=${visualProof.faceCount}"
@@ -223,10 +215,10 @@ private class MarketPortraitLabRunner(
         val input = MlKitImageInput.fromBitmap(bitmap)
         return try {
             collectRepeated(
-                repeatedRuns = repeatedRuns,
+                repeatedRuns,
                 observe = { pipeline.observe(input) },
-                warnings = warnings,
-                runtimeLog = runtimeLog
+                warnings,
+                runtimeLog
             )
         } finally {
             (engine as? AutoCloseable)?.close()
@@ -243,12 +235,12 @@ private class MarketPortraitLabRunner(
         val pipeline = SequentialPortraitObservationPipeline(listOf(engine))
         return try {
             collectRepeated(
-                repeatedRuns = repeatedRuns,
+                repeatedRuns,
                 observe = {
                     bitmap.withMediaPipeImageInput { input -> pipeline.observe(input) }
                 },
-                warnings = warnings,
-                runtimeLog = runtimeLog
+                warnings,
+                runtimeLog
             )
         } finally {
             (engine as? AutoCloseable)?.close()
@@ -260,7 +252,8 @@ private class MarketPortraitLabRunner(
         observe: suspend () -> ObservationPipelineResult,
         warnings: MutableList<String>,
         runtimeLog: MutableList<String>
-    ): List<ObservationBenchmarkResult> = buildList {
+    ): List<ObservationBenchmarkResult> {
+        val collected = mutableListOf<ObservationBenchmarkResult>()
         repeat(repeatedRuns) { runIndex ->
             when (val result = observe()) {
                 is ObservationPipelineResult.Success -> {
@@ -268,28 +261,25 @@ private class MarketPortraitLabRunner(
                         val indexed = benchmark.copy(
                             measurement = benchmark.measurement.copy(repeatedRunIndex = runIndex)
                         )
-                        add(indexed)
+                        collected += indexed
                         runtimeLog += "run_${runIndex}_time_ms=${indexed.measurement.processingTimeMillis}"
                     }
                 }
-
                 is ObservationPipelineResult.MergeConflict -> {
                     warnings += "Unexpected single-backend merge conflict: ${result.conflicts.size}"
                     result.backendResults.forEach { benchmark ->
-                        add(
-                            benchmark.copy(
-                                measurement = benchmark.measurement.copy(repeatedRunIndex = runIndex)
-                            )
+                        collected += benchmark.copy(
+                            measurement = benchmark.measurement.copy(repeatedRunIndex = runIndex)
                         )
                     }
                 }
-
                 is ObservationPipelineResult.BackendFailure -> {
                     val detail = result.failure.message ?: result.failure.exceptionType
                     warnings += "${result.failure.backend.name} failed: $detail"
                 }
             }
         }
+        return collected
     }
 
     private fun failure(message: String, error: Throwable) = PortraitLabRunResult.Failure(
@@ -309,6 +299,8 @@ private fun Context.decodePortraitImage(uri: Uri): DecodedPortraitImage {
     contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
     val decoded = contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream)
         ?: throw IOException("Unable to open image: $uri")
+    val decodedWidth = decoded.width
+    val decodedHeight = decoded.height
 
     val orientation = contentResolver.openInputStream(uri)?.use { stream ->
         ExifInterface(stream).getAttributeInt(
@@ -325,8 +317,8 @@ private fun Context.decodePortraitImage(uri: Uri): DecodedPortraitImage {
             decoded,
             0,
             0,
-            decoded.width,
-            decoded.height,
+            decodedWidth,
+            decodedHeight,
             transform.matrix,
             true
         ).also { if (it !== decoded) decoded.recycle() }
@@ -341,8 +333,8 @@ private fun Context.decodePortraitImage(uri: Uri): DecodedPortraitImage {
         orientedBitmap = argb,
         previewBitmap = preview,
         metadata = PortraitSourceMetadata(
-            encodedWidth = bounds.outWidth.takeIf { it > 0 } ?: decoded.width,
-            encodedHeight = bounds.outHeight.takeIf { it > 0 } ?: decoded.height,
+            encodedWidth = bounds.outWidth.takeIf { it > 0 } ?: decodedWidth,
+            encodedHeight = bounds.outHeight.takeIf { it > 0 } ?: decodedHeight,
             orientedWidth = argb.width,
             orientedHeight = argb.height,
             orientationDegrees = transform.rotationDegrees,
