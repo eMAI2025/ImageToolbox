@@ -33,7 +33,7 @@ jobs:
   portrait-analysis-tests:
     name: Portrait analysis tests
     runs-on: ubuntu-latest
-    timeout-minutes: 70
+    timeout-minutes: 80
 
     steps:
       - name: Checkout
@@ -77,6 +77,15 @@ jobs:
             :feature:portrait-lab:test \
             --stacktrace \
             --no-daemon 2>&1 | tee ci-tests.log
+
+      - name: Compile Market device smoke test APK
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew \
+            :lib:portrait-analysis-mlkit:assembleMarketDebugAndroidTest \
+            --stacktrace \
+            --no-daemon 2>&1 | tee ci-device-test-apk.log
 
       - name: Run portrait module lint
         shell: bash
@@ -150,6 +159,7 @@ jobs:
             lib/portrait-analysis/build/test-results/**
             lib/portrait-analysis-mlkit/build/reports/**
             lib/portrait-analysis-mlkit/build/test-results/**
+            lib/portrait-analysis-mlkit/build/outputs/apk/androidTest/**
             lib/portrait-analysis-mediapipe/build/reports/**
             lib/portrait-analysis-mediapipe/build/test-results/**
             feature/portrait-lab/build/reports/**
