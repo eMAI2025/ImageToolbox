@@ -16,7 +16,7 @@ dependencies {
     implementation(projects.lib.portraitAnalysis)
 
     "marketImplementation"("com.google.mlkit:face-detection:16.1.7")
-    "marketImplementation"("com.google.mlkit:face-mesh-detection:16.0.0-beta1")
+    "marketImplementation"("com.google.mlkit:face-mesh-detection:16.0.0-beta3")
     "marketImplementation"("com.google.mlkit:pose-detection-accurate:18.0.0-beta5")
     "marketImplementation"(libs.mlkit.segmentation.selfie)
 
