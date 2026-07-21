@@ -17,7 +17,7 @@ fun createPortraitLabRunner(context: Context): PortraitLabRunner = FossPortraitL
 private class FossPortraitLabRunner : PortraitLabRunner {
     override val availability: List<PortraitBackendAvailability> = listOf(
         PortraitBackendAvailability(
-            backend = ObservationBackend.ML_KIT_FACE_MESH,
+            backend = ObservationBackend.ML_KIT_FACE_DETECTION,
             available = false,
             reason = "ML Kit runtime is not included in the FOSS build"
         ),
@@ -28,10 +28,13 @@ private class FossPortraitLabRunner : PortraitLabRunner {
         )
     )
 
-    override suspend fun run(uri: Uri, repeatedRuns: Int): PortraitLabRunResult =
-        PortraitLabRunResult.Failure(
-            message = "Portrait Lab runtime detectors are available in the Market build only"
-        )
+    override suspend fun run(
+        uri: Uri,
+        backend: ObservationBackend,
+        repeatedRuns: Int
+    ): PortraitLabRunResult = PortraitLabRunResult.Failure(
+        message = "Portrait Lab runtime detectors are available in the Market build only"
+    )
 
     override fun close() = Unit
 }
