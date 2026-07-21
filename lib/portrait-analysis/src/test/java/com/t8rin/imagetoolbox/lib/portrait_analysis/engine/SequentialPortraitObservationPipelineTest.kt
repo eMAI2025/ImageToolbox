@@ -77,6 +77,28 @@ class SequentialPortraitObservationPipelineTest {
     }
 
     @Test
+    fun `contains NoSuchMethodError as backend failure`() {
+        val pipeline = SequentialPortraitObservationPipeline(
+            engines = listOf(
+                FakeEngine(
+                    backend = ObservationBackend.ML_KIT_FACE_DETECTION,
+                    observation = observation(faceCount = 1)
+                ),
+                LinkageFailingEngine(ObservationBackend.ML_KIT_FACE_MESH)
+            )
+        )
+
+        val result = runImmediate { pipeline.observe("image") }
+
+        assertTrue(result is ObservationPipelineResult.BackendFailure)
+        result as ObservationPipelineResult.BackendFailure
+        assertEquals(1, result.backendResults.size)
+        assertEquals(ObservationBackend.ML_KIT_FACE_MESH, result.failure.backend)
+        assertEquals(NoSuchMethodError::class.qualifiedName, result.failure.exceptionType)
+        assertEquals("incompatible detector runtime", result.failure.message)
+    }
+
+    @Test
     fun `returns merge conflict instead of silently overwriting a landmark`() {
         val first = observation(
             landmarks = mapOf("shared" to landmark("shared", 0.2f))
@@ -140,6 +162,14 @@ class SequentialPortraitObservationPipelineTest {
     ) : PortraitObservationEngine<String> {
         override suspend fun observe(input: String): SubjectObservation {
             error("detector failed")
+        }
+    }
+
+    private class LinkageFailingEngine(
+        override val backend: ObservationBackend
+    ) : PortraitObservationEngine<String> {
+        override suspend fun observe(input: String): SubjectObservation {
+            throw NoSuchMethodError("incompatible detector runtime")
         }
     }
 
