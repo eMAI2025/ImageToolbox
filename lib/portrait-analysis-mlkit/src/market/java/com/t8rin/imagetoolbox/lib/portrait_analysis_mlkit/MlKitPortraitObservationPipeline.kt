@@ -27,30 +27,33 @@ data class MlKitPortraitBenchmarkResult(
 )
 
 /**
- * Market-build observation pipeline using only on-device ML Kit detectors.
+ * Market-build observation pipeline using on-device ML Kit detectors.
  *
- * Detectors execute sequentially to provide independent timing and bounded memory pressure.
- * Stable body/segmentation backends execute before the optional beta face-mesh backend so a
- * contained face-mesh compatibility failure still preserves the earlier measurements.
+ * The stable runtime deliberately excludes ML Kit Face Mesh because its beta MediaPipe-internal
+ * dependency has caused binary incompatibility with the rest of the detector stack on the target
+ * device. Detailed face landmarks are supplied by the isolated MediaPipe adapter when its model is
+ * available. The experimental face-mesh path remains explicit and opt-in.
  */
 class MlKitPortraitObservationPipeline(
     private val faceDetectionEngine: MlKitFaceDetectionObservationEngine =
         MlKitFaceDetectionObservationEngine(),
-    private val faceMeshEngine: MlKitFaceMeshObservationEngine =
-        MlKitFaceMeshObservationEngine(),
     private val poseEngine: MlKitPoseObservationEngine =
         MlKitPoseObservationEngine(),
     private val segmentationEngine: MlKitSelfieSegmentationObservationEngine =
-        MlKitSelfieSegmentationObservationEngine()
+        MlKitSelfieSegmentationObservationEngine(),
+    private val faceMeshEngine: MlKitFaceMeshObservationEngine? = null
 ) : AutoCloseable {
 
+    val experimentalFaceMeshEnabled: Boolean
+        get() = faceMeshEngine != null
+
     private val pipeline = SequentialPortraitObservationPipeline(
-        engines = listOf<PortraitObservationEngine<MlKitImageInput>>(
-            faceDetectionEngine,
-            poseEngine,
-            segmentationEngine,
-            faceMeshEngine
-        )
+        engines = buildList<PortraitObservationEngine<MlKitImageInput>> {
+            add(faceDetectionEngine)
+            add(poseEngine)
+            add(segmentationEngine)
+            faceMeshEngine?.let(::add)
+        }
     )
 
     suspend fun observe(input: MlKitImageInput): ObservationPipelineResult =
@@ -89,17 +92,28 @@ class MlKitPortraitObservationPipeline(
     }
 
     override fun close() {
-        val failures = listOf(
-            runCatching { faceDetectionEngine.close() }.exceptionOrNull(),
-            runCatching { faceMeshEngine.close() }.exceptionOrNull(),
-            runCatching { poseEngine.close() }.exceptionOrNull(),
-            runCatching { segmentationEngine.close() }.exceptionOrNull()
-        ).filterNotNull()
+        val failures = buildList {
+            runCatching { faceDetectionEngine.close() }.exceptionOrNull()?.let(::add)
+            runCatching { poseEngine.close() }.exceptionOrNull()?.let(::add)
+            runCatching { segmentationEngine.close() }.exceptionOrNull()?.let(::add)
+            faceMeshEngine?.let { engine ->
+                runCatching { engine.close() }.exceptionOrNull()?.let(::add)
+            }
+        }
 
         if (failures.isNotEmpty()) {
             val primary = failures.first()
             failures.drop(1).forEach(primary::addSuppressed)
             throw primary
         }
+    }
+
+    companion object {
+        fun stable(): MlKitPortraitObservationPipeline = MlKitPortraitObservationPipeline()
+
+        fun experimentalWithFaceMesh(): MlKitPortraitObservationPipeline =
+            MlKitPortraitObservationPipeline(
+                faceMeshEngine = MlKitFaceMeshObservationEngine()
+            )
     }
 }
