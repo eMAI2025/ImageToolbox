@@ -24,8 +24,8 @@ data class MlKitFaceDetectionPointSnapshot(
     val yPixels: Float
 ) {
     init {
-        require(xPixels.isFinite()) { "xPixels must be finite" }
-        require(yPixels.isFinite()) { "yPixels must be finite" }
+        require(xPixels.isFinite())
+        require(yPixels.isFinite())
     }
 }
 
@@ -34,7 +34,7 @@ data class MlKitFaceDetectionLandmarkSnapshot(
     val point: MlKitFaceDetectionPointSnapshot
 ) {
     init {
-        require(id.isNotBlank()) { "id cannot be blank" }
+        require(id.isNotBlank())
     }
 }
 
@@ -44,11 +44,9 @@ data class MlKitFaceDetectionContourSnapshot(
     val closed: Boolean
 ) {
     init {
-        require(id.isNotBlank()) { "id cannot be blank" }
-        require(points.isNotEmpty()) { "points cannot be empty" }
-        require(!closed || points.size >= 3) {
-            "A closed contour requires at least three points"
-        }
+        require(id.isNotBlank())
+        require(points.isNotEmpty())
+        require(!closed || points.size >= 3)
     }
 }
 
@@ -71,24 +69,16 @@ data class MlKitDetectedFaceSnapshot(
         require(boundingTopPixels.isFinite())
         require(boundingRightPixels.isFinite())
         require(boundingBottomPixels.isFinite())
-        require(boundingRightPixels >= boundingLeftPixels) {
-            "boundingRightPixels cannot be lower than boundingLeftPixels"
-        }
-        require(boundingBottomPixels >= boundingTopPixels) {
-            "boundingBottomPixels cannot be lower than boundingTopPixels"
-        }
+        require(boundingRightPixels >= boundingLeftPixels)
+        require(boundingBottomPixels >= boundingTopPixels)
         require(yawDegrees.isFinite())
         require(pitchDegrees.isFinite())
         require(rollDegrees.isFinite())
         require(smilingProbability == null || smilingProbability in 0f..1f)
         require(leftEyeOpenProbability == null || leftEyeOpenProbability in 0f..1f)
         require(rightEyeOpenProbability == null || rightEyeOpenProbability in 0f..1f)
-        require(landmarks.map { it.id }.distinct().size == landmarks.size) {
-            "Face detection landmark ids must be unique"
-        }
-        require(contours.map { it.id }.distinct().size == contours.size) {
-            "Face detection contour ids must be unique"
-        }
+        require(landmarks.map { it.id }.distinct().size == landmarks.size)
+        require(contours.map { it.id }.distinct().size == contours.size)
     }
 }
 
@@ -98,17 +88,12 @@ data class MlKitFaceDetectionSnapshot(
     val faces: List<MlKitDetectedFaceSnapshot>
 ) {
     init {
-        require(imageWidth > 0) { "imageWidth must be positive" }
-        require(imageHeight > 0) { "imageHeight must be positive" }
+        require(imageWidth > 0)
+        require(imageHeight > 0)
     }
 }
 
-/**
- * Maps face detector output while keeping all backend-specific ids namespaced per face.
- *
- * Landmark confidence is unavailable in ML Kit Face Detection and remains null. Aggregate pose
- * is exposed only for a single-face image; multi-face pose remains attached to raw snapshots only.
- */
+/** Maps ML Kit Face Detection into normalized, backend-independent geometry. */
 object MlKitFaceDetectionObservationMapper {
 
     fun map(snapshot: MlKitFaceDetectionSnapshot): SubjectObservation {
@@ -118,38 +103,27 @@ object MlKitFaceDetectionObservationMapper {
         val classifications = linkedMapOf<String, ClassificationObservation>()
 
         snapshot.faces.forEachIndexed { faceIndex, face ->
+            addBoundingGeometry(
+                faceIndex = faceIndex,
+                face = face,
+                imageWidth = snapshot.imageWidth,
+                imageHeight = snapshot.imageHeight,
+                landmarks = landmarks,
+                contours = contours
+            )
+
             face.landmarks.forEach { landmark ->
                 val id = rawLandmarkId(faceIndex, landmark.id)
-                val point = normalize(
-                    point = landmark.point,
-                    imageWidth = snapshot.imageWidth,
-                    imageHeight = snapshot.imageHeight
-                )
-                landmarks[id] = LandmarkObservation(
-                    id = id,
-                    point = point,
-                    confidence = null,
-                    confidenceSource = ConfidenceSource.UNAVAILABLE,
-                    visibility = visibilityFor(point),
-                    backend = ObservationBackend.ML_KIT_FACE_DETECTION
-                )
+                val point = normalize(landmark.point, snapshot.imageWidth, snapshot.imageHeight)
+                landmarks[id] = observation(id, point)
             }
 
             face.contours.forEach { contour ->
                 val contourVertexIds = contour.points.mapIndexed { pointIndex, point ->
                     val id = rawContourPointId(faceIndex, contour.id, pointIndex)
-                    val normalized = normalize(
-                        point = point,
-                        imageWidth = snapshot.imageWidth,
-                        imageHeight = snapshot.imageHeight
-                    )
-                    landmarks[id] = LandmarkObservation(
-                        id = id,
-                        point = normalized,
-                        confidence = null,
-                        confidenceSource = ConfidenceSource.UNAVAILABLE,
-                        visibility = visibilityFor(normalized),
-                        backend = ObservationBackend.ML_KIT_FACE_DETECTION
+                    landmarks[id] = observation(
+                        id,
+                        normalize(point, snapshot.imageWidth, snapshot.imageHeight)
                     )
                     id
                 }
@@ -171,42 +145,26 @@ object MlKitFaceDetectionObservationMapper {
                 confidenceSource = ConfidenceSource.UNAVAILABLE,
                 occlusion = null,
                 pixelCoverage = normalizedBoundingCoverage(
-                    face = face,
-                    imageWidth = snapshot.imageWidth,
-                    imageHeight = snapshot.imageHeight
+                    face,
+                    snapshot.imageWidth,
+                    snapshot.imageHeight
                 ),
                 backend = ObservationBackend.ML_KIT_FACE_DETECTION
             )
 
-            face.smilingProbability?.let { probability ->
-                addClassification(
-                    classifications = classifications,
-                    id = rawClassificationId(faceIndex, SMILING_PROBABILITY),
-                    probability = probability
-                )
+            face.smilingProbability?.let {
+                addClassification(classifications, rawClassificationId(faceIndex, SMILING_PROBABILITY), it)
             }
-            face.leftEyeOpenProbability?.let { probability ->
-                addClassification(
-                    classifications = classifications,
-                    id = rawClassificationId(faceIndex, LEFT_EYE_OPEN_PROBABILITY),
-                    probability = probability
-                )
+            face.leftEyeOpenProbability?.let {
+                addClassification(classifications, rawClassificationId(faceIndex, LEFT_EYE_OPEN_PROBABILITY), it)
             }
-            face.rightEyeOpenProbability?.let { probability ->
-                addClassification(
-                    classifications = classifications,
-                    id = rawClassificationId(faceIndex, RIGHT_EYE_OPEN_PROBABILITY),
-                    probability = probability
-                )
+            face.rightEyeOpenProbability?.let {
+                addClassification(classifications, rawClassificationId(faceIndex, RIGHT_EYE_OPEN_PROBABILITY), it)
             }
         }
 
         val pose = snapshot.faces.singleOrNull()?.let { face ->
-            PoseObservation(
-                yawDegrees = face.yawDegrees,
-                pitchDegrees = face.pitchDegrees,
-                rollDegrees = face.rollDegrees
-            )
+            PoseObservation(face.yawDegrees, face.pitchDegrees, face.rollDegrees)
         } ?: PoseObservation()
 
         return SubjectObservation(
@@ -221,6 +179,60 @@ object MlKitFaceDetectionObservationMapper {
         )
     }
 
+    private fun addBoundingGeometry(
+        faceIndex: Int,
+        face: MlKitDetectedFaceSnapshot,
+        imageWidth: Int,
+        imageHeight: Int,
+        landmarks: MutableMap<String, LandmarkObservation>,
+        contours: MutableMap<String, ContourObservation>
+    ) {
+        val cornerPoints = listOf(
+            "top_left" to MlKitFaceDetectionPointSnapshot(
+                face.boundingLeftPixels,
+                face.boundingTopPixels
+            ),
+            "top_right" to MlKitFaceDetectionPointSnapshot(
+                face.boundingRightPixels,
+                face.boundingTopPixels
+            ),
+            "bottom_right" to MlKitFaceDetectionPointSnapshot(
+                face.boundingRightPixels,
+                face.boundingBottomPixels
+            ),
+            "bottom_left" to MlKitFaceDetectionPointSnapshot(
+                face.boundingLeftPixels,
+                face.boundingBottomPixels
+            )
+        )
+        val vertexIds = cornerPoints.map { (corner, point) ->
+            val id = rawBoundingPointId(faceIndex, corner)
+            landmarks[id] = observation(id, normalize(point, imageWidth, imageHeight))
+            id
+        }
+        val centerId = rawFaceCenterId(faceIndex)
+        landmarks[centerId] = observation(
+            centerId,
+            normalize(
+                MlKitFaceDetectionPointSnapshot(
+                    xPixels = (face.boundingLeftPixels + face.boundingRightPixels) / 2f,
+                    yPixels = (face.boundingTopPixels + face.boundingBottomPixels) / 2f
+                ),
+                imageWidth,
+                imageHeight
+            )
+        )
+        val contourId = rawBoundingContourId(faceIndex)
+        contours[contourId] = ContourObservation(
+            id = contourId,
+            vertexIds = vertexIds,
+            closed = true,
+            confidence = null,
+            confidenceSource = ConfidenceSource.UNAVAILABLE,
+            backend = ObservationBackend.ML_KIT_FACE_DETECTION
+        )
+    }
+
     fun rawLandmarkId(faceIndex: Int, landmarkId: String): String =
         "face_${faceIndex}_detection_landmark_$landmarkId"
 
@@ -230,10 +242,27 @@ object MlKitFaceDetectionObservationMapper {
     fun rawContourId(faceIndex: Int, contourId: String): String =
         "face_${faceIndex}_detection_contour_$contourId"
 
+    fun rawBoundingPointId(faceIndex: Int, corner: String): String =
+        "face_${faceIndex}_detection_bounding_box_$corner"
+
+    fun rawBoundingContourId(faceIndex: Int): String =
+        "face_${faceIndex}_detection_bounding_box"
+
+    fun rawFaceCenterId(faceIndex: Int): String = "face_${faceIndex}_detection_center"
+
     fun rawFaceRegionId(faceIndex: Int): String = "face_${faceIndex}_detection_region"
 
     fun rawClassificationId(faceIndex: Int, classificationId: String): String =
         "face_${faceIndex}_detection_$classificationId"
+
+    private fun observation(id: String, point: NormalizedPoint3D) = LandmarkObservation(
+        id = id,
+        point = point,
+        confidence = null,
+        confidenceSource = ConfidenceSource.UNAVAILABLE,
+        visibility = visibilityFor(point),
+        backend = ObservationBackend.ML_KIT_FACE_DETECTION
+    )
 
     private fun normalize(
         point: MlKitFaceDetectionPointSnapshot,
