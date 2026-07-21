@@ -8,18 +8,30 @@
 
 package com.t8rin.imagetoolbox.lib.portrait_analysis_mlkit
 
+import android.graphics.Bitmap
 import com.google.mlkit.vision.common.InputImage
 
 /**
- * ML Kit input plus authoritative dimensions of the coordinate space returned by detectors.
+ * Opaque ML Kit input plus authoritative dimensions of the detector coordinate space.
+ *
+ * Vendor SDK types remain internal to the adapter module so feature modules do not need direct
+ * ML Kit dependencies.
  */
-data class MlKitImageInput(
-    val image: InputImage,
+class MlKitImageInput internal constructor(
+    internal val image: InputImage,
     val width: Int,
     val height: Int
 ) {
     init {
         require(width > 0) { "width must be positive" }
         require(height > 0) { "height must be positive" }
+    }
+
+    companion object {
+        fun fromBitmap(bitmap: Bitmap): MlKitImageInput = MlKitImageInput(
+            image = InputImage.fromBitmap(bitmap, 0),
+            width = bitmap.width,
+            height = bitmap.height
+        )
     }
 }
