@@ -12,8 +12,6 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
-import com.google.mediapipe.framework.image.BitmapImageBuilder
-import com.google.mlkit.vision.common.InputImage
 import com.t8rin.imagetoolbox.lib.portrait_analysis.catalog.DefaultPortraitParameterCatalog
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodySilhouetteEnricher
 import com.t8rin.imagetoolbox.lib.portrait_analysis.engine.ObservationBenchmarkResult
@@ -32,12 +30,15 @@ import com.t8rin.imagetoolbox.lib.portrait_analysis_mediapipe.face.MediaPipeFace
 import com.t8rin.imagetoolbox.lib.portrait_analysis_mediapipe.face.MediaPipeFaceLandmarkerObservationEngine
 import com.t8rin.imagetoolbox.lib.portrait_analysis_mediapipe.pose.MediaPipePoseLandmarkerConfig
 import com.t8rin.imagetoolbox.lib.portrait_analysis_mediapipe.pose.MediaPipePoseLandmarkerObservationEngine
+import com.t8rin.imagetoolbox.lib.portrait_analysis_mediapipe.withMediaPipeImageInput
 import com.t8rin.imagetoolbox.lib.portrait_analysis_mlkit.MlKitImageInput
 import com.t8rin.imagetoolbox.lib.portrait_analysis_mlkit.MlKitPortraitObservationPipeline
 import java.io.IOException
 
 private const val FACE_MODEL_ASSET = "models/face_landmarker.task"
 private const val POSE_MODEL_ASSET = "models/pose_landmarker_lite.task"
+private const val ML_KIT_FACE_MESH_BLOCK_REASON =
+    "Disabled in stable runtime: beta MediaPipe-internal binary incompatibility"
 
 fun createPortraitLabRunner(context: Context): PortraitLabRunner =
     MarketPortraitLabRunner(context.applicationContext)
@@ -46,7 +47,10 @@ private class MarketPortraitLabRunner(
     private val context: Context
 ) : PortraitLabRunner {
 
-    private val mlKitPipeline = MlKitPortraitObservationPipeline()
+    private val mlKitPipelineDelegate = lazy(LazyThreadSafetyMode.NONE) {
+        MlKitPortraitObservationPipeline.stable()
+    }
+    private val mlKitPipeline by mlKitPipelineDelegate
     private val faceModelAvailable = context.assetExists(FACE_MODEL_ASSET)
     private val poseModelAvailable = context.assetExists(POSE_MODEL_ASSET)
 
@@ -57,7 +61,8 @@ private class MarketPortraitLabRunner(
         ),
         PortraitBackendAvailability(
             backend = ObservationBackend.ML_KIT_FACE_MESH,
-            available = true
+            available = false,
+            reason = ML_KIT_FACE_MESH_BLOCK_REASON
         ),
         PortraitBackendAvailability(
             backend = ObservationBackend.ML_KIT_POSE,
@@ -90,25 +95,32 @@ private class MarketPortraitLabRunner(
         val bitmap = try {
             context.decodeBitmap(uri)
         } catch (error: Exception) {
-            return PortraitLabRunResult.Failure(
-                message = error.message ?: "Unable to decode the selected image",
-                exceptionType = error::class.qualifiedName
-            )
+            return failure("Unable to decode the selected image", error)
         }
 
-        val warnings = mutableListOf<String>()
-        val backendResults = mutableListOf<ObservationBenchmarkResult>()
-        val mlKitInput = MlKitImageInput(
-            image = InputImage.fromBitmap(bitmap, 0),
-            width = bitmap.width,
-            height = bitmap.height
+        val pipeline = try {
+            mlKitPipeline
+        } catch (error: LinkageError) {
+            return failure("ML Kit stable runtime initialization failed", error)
+        } catch (error: Exception) {
+            return failure("ML Kit stable runtime initialization failed", error)
+        }
+
+        val warnings = mutableListOf(
+            "ML Kit Face Mesh is disabled in the stable runtime"
         )
+        if (!faceModelAvailable) {
+            warnings += "Face fallback active: ML Kit Face Detection"
+        }
+
+        val backendResults = mutableListOf<ObservationBenchmarkResult>()
+        val mlKitInput = MlKitImageInput.fromBitmap(bitmap)
 
         repeat(repeatedRuns) { repeatedRunIndex ->
             collect(
-                result = mlKitPipeline.observe(mlKitInput),
+                result = pipeline.observe(mlKitInput),
                 repeatedRunIndex = repeatedRunIndex,
-                source = "ML Kit",
+                source = "ML Kit stable",
                 target = backendResults,
                 warnings = warnings
             )
@@ -119,17 +131,14 @@ private class MarketPortraitLabRunner(
             val mediaPipePipeline = SequentialPortraitObservationPipeline(mediaPipeEngines)
             try {
                 repeat(repeatedRuns) { repeatedRunIndex ->
-                    val mpImage = BitmapImageBuilder(bitmap).build()
-                    try {
+                    bitmap.withMediaPipeImageInput { mediaPipeInput ->
                         collect(
-                            result = mediaPipePipeline.observe(MediaPipeImageInput(mpImage)),
+                            result = mediaPipePipeline.observe(mediaPipeInput),
                             repeatedRunIndex = repeatedRunIndex,
                             source = "MediaPipe",
                             target = backendResults,
                             warnings = warnings
                         )
-                    } finally {
-                        mpImage.close()
                     }
                 }
             } finally {
@@ -186,7 +195,9 @@ private class MarketPortraitLabRunner(
     }
 
     override fun close() {
-        mlKitPipeline.close()
+        if (mlKitPipelineDelegate.isInitialized()) {
+            mlKitPipeline.close()
+        }
     }
 
     private fun createMediaPipeEngines(
@@ -202,8 +213,10 @@ private class MarketPortraitLabRunner(
                         )
                     )
                 )
+            } catch (error: LinkageError) {
+                warnings += "MediaPipe face unavailable: ${error.message ?: error::class.simpleName}"
             } catch (error: Exception) {
-                warnings += "MediaPipe face unavailable: ${error.message}"
+                warnings += "MediaPipe face unavailable: ${error.message ?: error::class.simpleName}"
             }
         }
         if (poseModelAvailable) {
@@ -216,8 +229,10 @@ private class MarketPortraitLabRunner(
                         )
                     )
                 )
+            } catch (error: LinkageError) {
+                warnings += "MediaPipe pose unavailable: ${error.message ?: error::class.simpleName}"
             } catch (error: Exception) {
-                warnings += "MediaPipe pose unavailable: ${error.message}"
+                warnings += "MediaPipe pose unavailable: ${error.message ?: error::class.simpleName}"
             }
         }
     }
@@ -245,6 +260,12 @@ private class MarketPortraitLabRunner(
                     (result.failure.message ?: result.failure.exceptionType)
         }
     }
+
+    private fun failure(message: String, error: Throwable): PortraitLabRunResult.Failure =
+        PortraitLabRunResult.Failure(
+            message = error.message?.let { "$message: $it" } ?: message,
+            exceptionType = error::class.qualifiedName
+        )
 }
 
 private fun Context.assetExists(path: String): Boolean = try {
