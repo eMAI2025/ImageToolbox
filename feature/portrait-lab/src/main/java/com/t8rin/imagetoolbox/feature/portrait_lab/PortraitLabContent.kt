@@ -21,8 +21,8 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -50,8 +50,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ObservationBackend
-import com.t8rin.imagetoolbox.lib.portrait_analysis.report.ParameterGateReportRenderer
-import com.t8rin.imagetoolbox.lib.portrait_analysis.report.PortraitRepeatabilityRenderer
 import com.t8rin.imagetoolbox.lib.portrait_analysis.visual.VisualProofStatus
 import kotlinx.coroutines.launch
 
@@ -75,7 +73,9 @@ fun PortraitLabContent(
         mutableStateOf(ObservationBackend.ML_KIT_FACE_DETECTION)
     }
     var state by remember { mutableStateOf<PortraitLabUiState>(PortraitLabUiState.Empty) }
-    var visibility by remember { mutableStateOf(PortraitOverlayVisibility()) }
+    var selectedStage by remember { mutableStateOf(VisualProofStage.SOURCE) }
+    var visibility by remember { mutableStateOf(VisualProofStage.SOURCE.visibility) }
+    var controlPointsOnly by remember { mutableStateOf(false) }
     var exportStatus by remember { mutableStateOf<String?>(null) }
 
     DisposableEffect(runner) {
@@ -87,10 +87,13 @@ fun PortraitLabContent(
     ) { uri ->
         selectedUri = uri
         state = PortraitLabUiState.Empty
+        selectedStage = VisualProofStage.SOURCE
+        visibility = selectedStage.visibility
+        controlPointsOnly = false
         exportStatus = null
     }
 
-    fun run(repeatedRuns: Int) {
+    fun runOnce() {
         val uri = selectedUri ?: return
         state = PortraitLabUiState.Running
         exportStatus = null
@@ -98,8 +101,7 @@ fun PortraitLabContent(
             state = when (
                 val result = runner.run(
                     uri = uri,
-                    backend = selectedBackend,
-                    repeatedRuns = repeatedRuns
+                    backend = selectedBackend
                 )
             ) {
                 is PortraitLabRunResult.Success -> PortraitLabUiState.Complete(result.output)
@@ -117,7 +119,7 @@ fun PortraitLabContent(
                     Column {
                         Text("Portrait Lab")
                         Text(
-                            text = "P1-VISUAL-PROOF — no deformation",
+                            text = "P1-VISUAL-PROOF — one frozen result",
                             style = MaterialTheme.typography.labelSmall
                         )
                     }
@@ -161,18 +163,11 @@ fun PortraitLabContent(
                         Text(if (selectedUri == null) "Select image" else "Change image")
                     }
                     Button(
-                        onClick = { run(1) },
+                        onClick = ::runOnce,
                         enabled = selectedUri != null && state !is PortraitLabUiState.Running,
                         modifier = Modifier.weight(1f)
                     ) {
                         Text("Run 1×")
-                    }
-                    OutlinedButton(
-                        onClick = { run(3) },
-                        enabled = selectedUri != null && state !is PortraitLabUiState.Running,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("Run 3×")
                     }
                 }
             }
@@ -182,9 +177,9 @@ fun PortraitLabContent(
                     StatusCard(
                         title = "Ready",
                         text = if (selectedUri == null) {
-                            "Select one image. The first test runs only one face backend."
+                            "Select one image. The detector will run exactly once."
                         } else {
-                            "Image selected. Start with Run 1× and validate the frozen overlay."
+                            "Run once, then validate stages 1 through 5 in order."
                         }
                     )
                 }
@@ -206,15 +201,31 @@ fun PortraitLabContent(
 
                 is PortraitLabUiState.Complete -> {
                     item {
+                        VisualProofStageSelector(
+                            selected = selectedStage,
+                            onSelected = { stage ->
+                                selectedStage = stage
+                                visibility = stage.visibility
+                                controlPointsOnly = stage.controlPointsOnly
+                            }
+                        )
+                    }
+                    item {
                         OverlayControls(
                             visibility = visibility,
-                            onChange = { visibility = it }
+                            onChange = {
+                                visibility = it
+                                selectedStage = VisualProofStage.fromVisibility(it)
+                                    ?: selectedStage
+                                controlPointsOnly = false
+                            }
                         )
                     }
                     item {
                         FrozenDiagnosticPreview(
                             output = current.output,
-                            visibility = visibility
+                            visibility = visibility,
+                            controlPointsOnly = controlPointsOnly
                         )
                     }
                     item { VisualProofSummaryCard(current.output) }
@@ -222,11 +233,12 @@ fun PortraitLabContent(
                         Button(
                             onClick = {
                                 scope.launch {
-                                    exportStatus = "Saving diagnostics..."
+                                    exportStatus = "Saving visual proof package..."
                                     exportStatus = exportPortraitDiagnostics(
                                         context = context,
                                         output = current.output,
-                                        visibility = visibility
+                                        visibility = visibility,
+                                        controlPointsOnly = controlPointsOnly
                                     ).fold(
                                         onSuccess = { "Saved: $it" },
                                         onFailure = { "Export failed: ${it.message}" }
@@ -235,7 +247,7 @@ fun PortraitLabContent(
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("Save PNG + JSON diagnostics")
+                            Text("Export PNG + detection_result.json + transform JSON")
                         }
                     }
                     exportStatus?.let { status ->
@@ -265,19 +277,9 @@ fun PortraitLabContent(
                     }
                     item {
                         ReportCard(
-                            "Parameter gates",
-                            ParameterGateReportRenderer.render(current.output.parameterReport)
+                            "Runtime log",
+                            current.output.runtimeLog.joinToString("\n")
                         )
-                    }
-                    if (current.output.backendResults.size > 1) {
-                        item {
-                            ReportCard(
-                                "Repeatability",
-                                PortraitRepeatabilityRenderer.render(
-                                    current.output.repeatabilityReport
-                                )
-                            )
-                        }
                     }
                 }
             }
@@ -285,10 +287,37 @@ fun PortraitLabContent(
             item { HorizontalDivider() }
             item {
                 Text(
-                    text = "PASS requires a visually valid dense mesh. ML Kit Face Detection is expected to return PARTIAL when its bounding box, control points and contours are correct.",
+                    text = "Automatic PASS is disabled. READY_FOR_VISUAL_REVIEW means only that the frozen image is ready for human inspection. No face deformation is performed.",
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(bottom = 24.dp)
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun VisualProofStageSelector(
+    selected: VisualProofStage,
+    onSelected: (VisualProofStage) -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text("Validation sequence", style = MaterialTheme.typography.titleMedium)
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                VisualProofStage.entries.forEach { stage ->
+                    FilterChip(
+                        selected = selected == stage,
+                        onClick = { onSelected(stage) },
+                        label = { Text(stage.label) }
+                    )
+                }
             }
         }
     }
@@ -379,10 +408,11 @@ private fun OverlayControls(
 @Composable
 private fun FrozenDiagnosticPreview(
     output: PortraitLabRunOutput,
-    visibility: PortraitOverlayVisibility
+    visibility: PortraitOverlayVisibility,
+    controlPointsOnly: Boolean
 ) {
-    val rendered = remember(output, visibility) {
-        renderDiagnosticBitmap(output, visibility)
+    val rendered = remember(output, visibility, controlPointsOnly) {
+        renderDiagnosticBitmap(output, visibility, controlPointsOnly)
     }
     DisposableEffect(rendered) {
         onDispose {
@@ -416,15 +446,15 @@ private fun VisualProofSummaryCard(output: PortraitLabRunOutput) {
             Text("Encoded image: ${metadata.encodedWidth} × ${metadata.encodedHeight}")
             Text("Oriented image: ${metadata.orientedWidth} × ${metadata.orientedHeight}")
             Text("Preview bitmap: ${metadata.previewWidth} × ${metadata.previewHeight}")
+            Text("EXIF orientation: ${metadata.exifOrientation}")
             Text("EXIF rotation: ${metadata.orientationDegrees}°")
             Text("Mirrored: ${metadata.mirrored}")
             Text("Faces: ${proof.faceCount}")
             Text("Points: ${proof.landmarkCount}")
             Text("Contours: ${proof.contourCount}")
             Text("Triangles: ${proof.triangleCount}")
-            Text("In-frame ratio: ${proof.inFrameLandmarkRatio}")
-            Text("Landmark spread: ${proof.normalizedLandmarkSpread}")
-            Text("Control points: ${proof.controlPointIds.joinToString()}")
+            Text("Rendered spread: ${proof.renderedLandmarkSpreadPixels} px²")
+            Text("Contour groups: ${proof.semanticContourGroups.joinToString()}")
             proof.reasons.forEach { Text("Reason: $it") }
         }
     }
