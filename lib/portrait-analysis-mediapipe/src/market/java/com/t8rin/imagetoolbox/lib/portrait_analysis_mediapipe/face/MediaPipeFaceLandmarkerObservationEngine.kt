@@ -37,12 +37,7 @@ data class MediaPipeFaceLandmarkerConfig(
     }
 }
 
-/**
- * Still-image MediaPipe Face Landmarker adapter.
- *
- * The task instance is reusable and must be closed by the owner. The runtime result is first converted
- * to a platform-neutral snapshot and only then mapped into the common POSTAC_MASTER observation model.
- */
+/** Still-image MediaPipe Face Landmarker adapter. */
 class MediaPipeFaceLandmarkerObservationEngine(
     context: Context,
     config: MediaPipeFaceLandmarkerConfig
@@ -85,6 +80,7 @@ private fun FaceLandmarkerResult.toSnapshot(): MediaPipeFaceLandmarkerSnapshot {
 
     return MediaPipeFaceLandmarkerSnapshot(
         faces = faceLandmarks().mapIndexed { faceIndex, faceLandmarks ->
+            val pointCount = faceLandmarks.size
             MediaPipeFaceSnapshot(
                 landmarks = faceLandmarks.mapIndexed { pointIndex, point ->
                     MediaPipeFaceLandmarkSnapshot(
@@ -103,7 +99,9 @@ private fun FaceLandmarkerResult.toSnapshot(): MediaPipeFaceLandmarkerSnapshot {
                             name = category.categoryName(),
                             score = category.score()
                         )
-                    }
+                    },
+                contours = MediaPipeFaceTopology.contours(pointCount),
+                triangles = MediaPipeFaceTopology.triangles(pointCount)
             )
         }
     )
