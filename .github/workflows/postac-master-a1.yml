@@ -3,6 +3,8 @@ name: POSTAC_MASTER A1 CI
 on:
   pull_request:
     paths:
+      - "app/**"
+      - "feature/ai-tools/**"
       - "feature/portrait-lab/**"
       - "lib/portrait-analysis/**"
       - "lib/portrait-analysis-mlkit/**"
@@ -14,6 +16,8 @@ on:
     branches:
       - "feature/postac-master-a1-benchmark"
     paths:
+      - "app/**"
+      - "feature/ai-tools/**"
       - "feature/portrait-lab/**"
       - "lib/portrait-analysis/**"
       - "lib/portrait-analysis-mlkit/**"
@@ -33,7 +37,7 @@ jobs:
   portrait-analysis-tests:
     name: Portrait analysis tests
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 70
 
     steps:
       - name: Checkout
@@ -63,6 +67,7 @@ jobs:
             :lib:portrait-analysis-mlkit:assemble \
             :lib:portrait-analysis-mediapipe:assemble \
             :feature:portrait-lab:assemble \
+            :feature:ai-tools:assemble \
             --stacktrace \
             --no-daemon 2>&1 | tee ci-assemble.log
 
@@ -75,6 +80,7 @@ jobs:
             :lib:portrait-analysis-mlkit:test \
             :lib:portrait-analysis-mediapipe:test \
             :feature:portrait-lab:test \
+            :feature:ai-tools:test \
             --stacktrace \
             --no-daemon 2>&1 | tee ci-tests.log
 
@@ -87,8 +93,26 @@ jobs:
             :lib:portrait-analysis-mlkit:lint \
             :lib:portrait-analysis-mediapipe:lint \
             :feature:portrait-lab:lint \
+            :feature:ai-tools:lint \
             --stacktrace \
             --no-daemon 2>&1 | tee ci-lint.log
+
+      - name: Build Market debug APK
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew \
+            :app:assembleMarketDebug \
+            --stacktrace \
+            --no-daemon 2>&1 | tee ci-market-apk.log
+
+      - name: Upload Market debug APK
+        if: success()
+        uses: actions/upload-artifact@v6
+        with:
+          name: portrait-lab-market-debug-apk
+          if-no-files-found: error
+          path: app/build/outputs/apk/market/debug/*.apk
 
       - name: Upload CI diagnostics
         if: always()
@@ -106,3 +130,5 @@ jobs:
             lib/portrait-analysis-mediapipe/build/test-results/**
             feature/portrait-lab/build/reports/**
             feature/portrait-lab/build/test-results/**
+            feature/ai-tools/build/reports/**
+            feature/ai-tools/build/test-results/**
