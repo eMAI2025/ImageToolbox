@@ -21,4 +21,6 @@ dependencies {
     "marketImplementation"(libs.mlkit.segmentation.selfie)
 
     testImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.runner)
 }
