@@ -8,24 +8,26 @@
 
 package com.t8rin.imagetoolbox.feature.portrait_lab
 
-import android.graphics.Bitmap
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -42,21 +44,15 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import com.t8rin.imagetoolbox.lib.portrait_analysis.overlay.PortraitOverlayScene
+import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ObservationBackend
 import com.t8rin.imagetoolbox.lib.portrait_analysis.report.ParameterGateReportRenderer
-import com.t8rin.imagetoolbox.lib.portrait_analysis.report.PortraitBackendComparisonRenderer
 import com.t8rin.imagetoolbox.lib.portrait_analysis.report.PortraitRepeatabilityRenderer
+import com.t8rin.imagetoolbox.lib.portrait_analysis.visual.VisualProofStatus
 import kotlinx.coroutines.launch
 
 private sealed interface PortraitLabUiState {
@@ -75,7 +71,12 @@ fun PortraitLabContent(
     val runner = remember(context) { createPortraitLabRunner(context) }
     val scope = rememberCoroutineScope()
     var selectedUri by remember { mutableStateOf<Uri?>(null) }
+    var selectedBackend by remember {
+        mutableStateOf(ObservationBackend.ML_KIT_FACE_DETECTION)
+    }
     var state by remember { mutableStateOf<PortraitLabUiState>(PortraitLabUiState.Empty) }
+    var visibility by remember { mutableStateOf(PortraitOverlayVisibility()) }
+    var exportStatus by remember { mutableStateOf<String?>(null) }
 
     DisposableEffect(runner) {
         onDispose { runner.close() }
@@ -86,6 +87,27 @@ fun PortraitLabContent(
     ) { uri ->
         selectedUri = uri
         state = PortraitLabUiState.Empty
+        exportStatus = null
+    }
+
+    fun run(repeatedRuns: Int) {
+        val uri = selectedUri ?: return
+        state = PortraitLabUiState.Running
+        exportStatus = null
+        scope.launch {
+            state = when (
+                val result = runner.run(
+                    uri = uri,
+                    backend = selectedBackend,
+                    repeatedRuns = repeatedRuns
+                )
+            ) {
+                is PortraitLabRunResult.Success -> PortraitLabUiState.Complete(result.output)
+                is PortraitLabRunResult.Failure -> PortraitLabUiState.Failed(
+                    listOfNotNull(result.message, result.exceptionType).joinToString("\n")
+                )
+            }
+        }
     }
 
     Scaffold(
@@ -95,16 +117,14 @@ fun PortraitLabContent(
                     Column {
                         Text("Portrait Lab")
                         Text(
-                            text = "POSTAC_MASTER A1 — observation only",
+                            text = "P1-VISUAL-PROOF — no deformation",
                             style = MaterialTheme.typography.labelSmall
                         )
                     }
                 },
                 navigationIcon = {
                     onGoBack?.let { callback ->
-                        TextButton(onClick = callback) {
-                            Text("Back")
-                        }
+                        TextButton(onClick = callback) { Text("Back") }
                     }
                 }
             )
@@ -120,9 +140,19 @@ fun PortraitLabContent(
             item { BackendAvailabilityCard(runner.availability) }
             item { ModelSelectionPolicyCard() }
             item {
+                FaceBackendSelector(
+                    availability = runner.availability,
+                    selected = selectedBackend,
+                    onSelected = {
+                        selectedBackend = it
+                        state = PortraitLabUiState.Empty
+                    }
+                )
+            }
+            item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     OutlinedButton(
                         onClick = { picker.launch("image/*") },
@@ -131,23 +161,14 @@ fun PortraitLabContent(
                         Text(if (selectedUri == null) "Select image" else "Change image")
                     }
                     Button(
-                        onClick = {
-                            val uri = selectedUri ?: return@Button
-                            state = PortraitLabUiState.Running
-                            scope.launch {
-                                state = when (val result = runner.run(uri, repeatedRuns = 3)) {
-                                    is PortraitLabRunResult.Success ->
-                                        PortraitLabUiState.Complete(result.output)
-                                    is PortraitLabRunResult.Failure ->
-                                        PortraitLabUiState.Failed(
-                                            listOfNotNull(
-                                                result.message,
-                                                result.exceptionType
-                                            ).joinToString("\n")
-                                        )
-                                }
-                            }
-                        },
+                        onClick = { run(1) },
+                        enabled = selectedUri != null && state !is PortraitLabUiState.Running,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Run 1×")
+                    }
+                    OutlinedButton(
+                        onClick = { run(3) },
                         enabled = selectedUri != null && state !is PortraitLabUiState.Running,
                         modifier = Modifier.weight(1f)
                     ) {
@@ -161,9 +182,9 @@ fun PortraitLabContent(
                     StatusCard(
                         title = "Ready",
                         text = if (selectedUri == null) {
-                            "Select one benchmark image. No pixels will be modified."
+                            "Select one image. The first test runs only one face backend."
                         } else {
-                            "Image selected. Run the detector benchmark."
+                            "Image selected. Start with Run 1× and validate the frozen overlay."
                         }
                     )
                 }
@@ -180,48 +201,83 @@ fun PortraitLabContent(
                 }
 
                 is PortraitLabUiState.Failed -> item {
-                    StatusCard(title = "Benchmark failed", text = current.message)
+                    StatusCard("Runtime failed", current.message)
                 }
 
                 is PortraitLabUiState.Complete -> {
                     item {
-                        PortraitOverlayPreview(
-                            bitmap = current.output.sourceBitmap,
-                            scene = current.output.overlayScene
+                        OverlayControls(
+                            visibility = visibility,
+                            onChange = { visibility = it }
                         )
                     }
-                    item { ResultSummaryCard(current.output) }
+                    item {
+                        FrozenDiagnosticPreview(
+                            output = current.output,
+                            visibility = visibility
+                        )
+                    }
+                    item { VisualProofSummaryCard(current.output) }
+                    item {
+                        Button(
+                            onClick = {
+                                scope.launch {
+                                    exportStatus = "Saving diagnostics..."
+                                    exportStatus = exportPortraitDiagnostics(
+                                        context = context,
+                                        output = current.output,
+                                        visibility = visibility
+                                    ).fold(
+                                        onSuccess = { "Saved: $it" },
+                                        onFailure = { "Export failed: ${it.message}" }
+                                    )
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Save PNG + JSON diagnostics")
+                        }
+                    }
+                    exportStatus?.let { status ->
+                        item { StatusCard("Diagnostic package", status) }
+                    }
                     if (current.output.warnings.isNotEmpty()) {
                         item {
                             ReportCard(
-                                title = "Warnings",
-                                report = current.output.warnings.joinToString("\n")
+                                "Warnings",
+                                current.output.warnings.joinToString("\n")
+                            )
+                        }
+                    }
+                    if (
+                        current.output.visualProof.status == VisualProofStatus.FAIL ||
+                        current.output.visualProof.status ==
+                        VisualProofStatus.VISUAL_VALIDATION_FAILED
+                    ) {
+                        item {
+                            ReportCard(
+                                "First 20 raw coordinates",
+                                current.output.visualProof.firstTwentyCoordinates.joinToString("\n") {
+                                    "${it.id}: x=${it.x}, y=${it.y}, backend=${it.backend}"
+                                }
                             )
                         }
                     }
                     item {
                         ReportCard(
-                            title = "Parameter gates",
-                            report = ParameterGateReportRenderer.render(
-                                current.output.parameterReport
-                            )
+                            "Parameter gates",
+                            ParameterGateReportRenderer.render(current.output.parameterReport)
                         )
                     }
-                    item {
-                        ReportCard(
-                            title = "Backend comparison",
-                            report = PortraitBackendComparisonRenderer.render(
-                                current.output.backendComparisonReport
+                    if (current.output.backendResults.size > 1) {
+                        item {
+                            ReportCard(
+                                "Repeatability",
+                                PortraitRepeatabilityRenderer.render(
+                                    current.output.repeatabilityReport
+                                )
                             )
-                        )
-                    }
-                    item {
-                        ReportCard(
-                            title = "Repeatability",
-                            report = PortraitRepeatabilityRenderer.render(
-                                current.output.repeatabilityReport
-                            )
-                        )
+                        }
                     }
                 }
             }
@@ -229,11 +285,147 @@ fun PortraitLabContent(
             item { HorizontalDivider() }
             item {
                 Text(
-                    text = "A1 does not perform face/body deformation, identity recognition, clothing replacement or background generation.",
+                    text = "PASS requires a visually valid dense mesh. ML Kit Face Detection is expected to return PARTIAL when its bounding box, control points and contours are correct.",
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(bottom = 24.dp)
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun FaceBackendSelector(
+    availability: List<PortraitBackendAvailability>,
+    selected: ObservationBackend,
+    onSelected: (ObservationBackend) -> Unit
+) {
+    val options = listOf(
+        ObservationBackend.ML_KIT_FACE_DETECTION,
+        ObservationBackend.MEDIAPIPE_FACE_LANDMARKER
+    )
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text("Face backend", style = MaterialTheme.typography.titleMedium)
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                options.forEach { backend ->
+                    val item = availability.firstOrNull { it.backend == backend }
+                    FilterChip(
+                        selected = selected == backend,
+                        onClick = { onSelected(backend) },
+                        enabled = item?.available == true,
+                        label = { Text(backend.name) }
+                    )
+                }
+            }
+            availability.firstOrNull { it.backend == selected }?.reason?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
+
+@Composable
+private fun OverlayControls(
+    visibility: PortraitOverlayVisibility,
+    onChange: (PortraitOverlayVisibility) -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text("Overlay layers", style = MaterialTheme.typography.titleMedium)
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FilterChip(
+                    selected = visibility.boundingBox,
+                    onClick = { onChange(visibility.copy(boundingBox = !visibility.boundingBox)) },
+                    label = { Text("Bounding box") }
+                )
+                FilterChip(
+                    selected = visibility.points,
+                    onClick = { onChange(visibility.copy(points = !visibility.points)) },
+                    label = { Text("Points") }
+                )
+                FilterChip(
+                    selected = visibility.contours,
+                    onClick = { onChange(visibility.copy(contours = !visibility.contours)) },
+                    label = { Text("Contours") }
+                )
+                FilterChip(
+                    selected = visibility.mesh,
+                    onClick = { onChange(visibility.copy(mesh = !visibility.mesh)) },
+                    label = { Text("Mesh") }
+                )
+                FilterChip(
+                    selected = visibility.masks,
+                    onClick = { onChange(visibility.copy(masks = !visibility.masks)) },
+                    label = { Text("Masks") }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FrozenDiagnosticPreview(
+    output: PortraitLabRunOutput,
+    visibility: PortraitOverlayVisibility
+) {
+    val rendered = remember(output, visibility) {
+        renderDiagnosticBitmap(output, visibility)
+    }
+    DisposableEffect(rendered) {
+        onDispose {
+            if (!rendered.isRecycled) rendered.recycle()
+        }
+    }
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Image(
+            bitmap = rendered.asImageBitmap(),
+            contentDescription = "Frozen portrait detector result",
+            contentScale = ContentScale.Fit,
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(rendered.width.toFloat() / rendered.height.toFloat())
+        )
+    }
+}
+
+@Composable
+private fun VisualProofSummaryCard(output: PortraitLabRunOutput) {
+    val proof = output.visualProof
+    val metadata = output.sourceMetadata
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text("Visual proof", style = MaterialTheme.typography.titleMedium)
+            Text("Backend: ${output.selectedBackend.name}")
+            Text("Status: ${proof.status.name}")
+            Text("Encoded image: ${metadata.encodedWidth} × ${metadata.encodedHeight}")
+            Text("Oriented image: ${metadata.orientedWidth} × ${metadata.orientedHeight}")
+            Text("Preview bitmap: ${metadata.previewWidth} × ${metadata.previewHeight}")
+            Text("EXIF rotation: ${metadata.orientationDegrees}°")
+            Text("Mirrored: ${metadata.mirrored}")
+            Text("Faces: ${proof.faceCount}")
+            Text("Points: ${proof.landmarkCount}")
+            Text("Contours: ${proof.contourCount}")
+            Text("Triangles: ${proof.triangleCount}")
+            Text("In-frame ratio: ${proof.inFrameLandmarkRatio}")
+            Text("Landmark spread: ${proof.normalizedLandmarkSpread}")
+            Text("Control points: ${proof.controlPointIds.joinToString()}")
+            proof.reasons.forEach { Text("Reason: $it") }
         }
     }
 }
@@ -248,7 +440,7 @@ private fun BackendAvailabilityCard(items: List<PortraitBackendAvailability>) {
             Text("Runtime backends", style = MaterialTheme.typography.titleMedium)
             items.forEach { item ->
                 Text(
-                    text = buildString {
+                    buildString {
                         append(if (item.available) "READY  " else "BLOCKED  ")
                         append(item.backend.name)
                         item.reason?.let { append(" — ").append(it) }
@@ -269,14 +461,10 @@ private fun ModelSelectionPolicyCard() {
         ) {
             Text("Detector model", style = MaterialTheme.typography.titleMedium)
             Text(
-                text = "Do not select a model from the general AI Tools model list. " +
-                    "Portrait Lab uses its own detector backends.",
-                style = MaterialTheme.typography.bodyMedium
+                "Do not select a model from the general AI Tools model list. Portrait Lab uses isolated detector backends."
             )
             Text(
-                text = "Detailed face analysis requires a compatible MediaPipe " +
-                    "Face Landmarker bundle at models/face_landmarker.task. " +
-                    "Upscale, denoise, enhancement and restoration models are not compatible.",
+                "Detailed face analysis requires models/face_landmarker.task. Upscale, denoise, restoration and enhancement models are incompatible.",
                 style = MaterialTheme.typography.bodySmall
             )
         }
@@ -288,27 +476,7 @@ private fun StatusCard(title: String, text: String) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium)
-            Text(text, style = MaterialTheme.typography.bodyMedium)
-        }
-    }
-}
-
-@Composable
-private fun ResultSummaryCard(output: PortraitLabRunOutput) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            Text("Result summary", style = MaterialTheme.typography.titleMedium)
-            Text("backend results=${output.backendResults.size}")
-            Text("overlay points=${output.overlayScene.pointCount}")
-            Text("overlay contours=${output.overlayScene.polylineCount}")
-            Text("overlay triangles=${output.overlayScene.triangleCount}")
-            Text("overlay masks=${output.overlayScene.maskCount}")
-            Text("enabled parameters=${output.parameterReport.enabledCount}")
-            Text("disabled parameters=${output.parameterReport.disabledCount}")
-            Text("repeatability=${output.repeatabilityReport.allDeterministic}")
+            Text(text)
         }
     }
 }
@@ -319,93 +487,10 @@ private fun ReportCard(title: String, report: String) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium)
             Text(
-                text = report,
+                report,
                 style = MaterialTheme.typography.bodySmall,
                 fontFamily = FontFamily.Monospace
             )
         }
     }
-}
-
-@Composable
-private fun PortraitOverlayPreview(
-    bitmap: Bitmap,
-    scene: PortraitOverlayScene
-) {
-    val image = remember(bitmap) { bitmap.asImageBitmap() }
-    val primary = MaterialTheme.colorScheme.primary
-    val secondary = MaterialTheme.colorScheme.secondary
-    val tertiary = MaterialTheme.colorScheme.tertiary
-
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Canvas(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 260.dp, max = 560.dp)
-        ) {
-            val scale = minOf(size.width / image.width, size.height / image.height)
-            val drawWidth = image.width * scale
-            val drawHeight = image.height * scale
-            val left = (size.width - drawWidth) / 2f
-            val top = (size.height - drawHeight) / 2f
-
-            drawImage(
-                image = image,
-                dstOffset = IntOffset(left.toInt(), top.toInt()),
-                dstSize = IntSize(drawWidth.toInt(), drawHeight.toInt())
-            )
-
-            scene.triangles.forEach { triangle ->
-                drawTriangle(
-                    first = triangle.first.x to triangle.first.y,
-                    second = triangle.second.x to triangle.second.y,
-                    third = triangle.third.x to triangle.third.y,
-                    left = left,
-                    top = top,
-                    width = drawWidth,
-                    height = drawHeight,
-                    color = tertiary.copy(alpha = 0.22f)
-                )
-            }
-            scene.polylines.forEach { polyline ->
-                val path = Path()
-                polyline.points.forEachIndexed { index, point ->
-                    val x = left + point.x * drawWidth
-                    val y = top + point.y * drawHeight
-                    if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
-                }
-                if (polyline.closed) path.close()
-                drawPath(path, secondary, style = Stroke(width = 2f))
-            }
-            scene.points.forEach { point ->
-                drawCircle(
-                    color = primary,
-                    radius = if (point.id.contains("mesh_")) 1.8f else 4f,
-                    center = Offset(
-                        x = left + point.position.x * drawWidth,
-                        y = top + point.position.y * drawHeight
-                    )
-                )
-            }
-        }
-    }
-}
-
-private fun DrawScope.drawTriangle(
-    first: Pair<Float, Float>,
-    second: Pair<Float, Float>,
-    third: Pair<Float, Float>,
-    left: Float,
-    top: Float,
-    width: Float,
-    height: Float,
-    color: Color
-) {
-    val path = Path().apply {
-        moveTo(left + first.first * width, top + first.second * height)
-        lineTo(left + second.first * width, top + second.second * height)
-        lineTo(left + third.first * width, top + third.second * height)
-        close()
-    }
-    drawPath(path = path, color = color, style = Stroke(width = 1f))
 }
