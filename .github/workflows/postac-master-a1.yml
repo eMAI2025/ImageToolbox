@@ -30,7 +30,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: postac-master-a1-${{ github.event.pull_request.number || github.ref }}
+  group: postac-master-a1-${{ github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
