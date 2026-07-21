@@ -118,6 +118,7 @@ fun PortraitLabContent(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item { BackendAvailabilityCard(runner.availability) }
+            item { ModelSelectionPolicyCard() }
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -255,6 +256,29 @@ private fun BackendAvailabilityCard(items: List<PortraitBackendAvailability>) {
                     style = MaterialTheme.typography.bodySmall
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun ModelSelectionPolicyCard() {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text("Detector model", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = "Do not select a model from the general AI Tools model list. " +
+                    "Portrait Lab uses its own detector backends.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                text = "Detailed face analysis requires a compatible MediaPipe " +
+                    "Face Landmarker bundle at models/face_landmarker.task. " +
+                    "Upscale, denoise, enhancement and restoration models are not compatible.",
+                style = MaterialTheme.typography.bodySmall
+            )
         }
     }
 }
