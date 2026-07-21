@@ -67,7 +67,6 @@ jobs:
             :lib:portrait-analysis-mlkit:assemble \
             :lib:portrait-analysis-mediapipe:assemble \
             :feature:portrait-lab:assemble \
-            :feature:ai-tools:assemble \
             --stacktrace \
             --no-daemon 2>&1 | tee ci-assemble.log
 
@@ -80,7 +79,6 @@ jobs:
             :lib:portrait-analysis-mlkit:test \
             :lib:portrait-analysis-mediapipe:test \
             :feature:portrait-lab:test \
-            :feature:ai-tools:test \
             --stacktrace \
             --no-daemon 2>&1 | tee ci-tests.log
 
@@ -93,7 +91,6 @@ jobs:
             :lib:portrait-analysis-mlkit:lint \
             :lib:portrait-analysis-mediapipe:lint \
             :feature:portrait-lab:lint \
-            :feature:ai-tools:lint \
             --stacktrace \
             --no-daemon 2>&1 | tee ci-lint.log
 
@@ -130,5 +127,3 @@ jobs:
             lib/portrait-analysis-mediapipe/build/test-results/**
             feature/portrait-lab/build/reports/**
             feature/portrait-lab/build/test-results/**
-            feature/ai-tools/build/reports/**
-            feature/ai-tools/build/test-results/**
