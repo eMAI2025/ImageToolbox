@@ -30,6 +30,8 @@ data class MlKitPortraitBenchmarkResult(
  * Market-build observation pipeline using only on-device ML Kit detectors.
  *
  * Detectors execute sequentially to provide independent timing and bounded memory pressure.
+ * Stable body/segmentation backends execute before the optional beta face-mesh backend so a
+ * contained face-mesh compatibility failure still preserves the earlier measurements.
  */
 class MlKitPortraitObservationPipeline(
     private val faceDetectionEngine: MlKitFaceDetectionObservationEngine =
@@ -45,9 +47,9 @@ class MlKitPortraitObservationPipeline(
     private val pipeline = SequentialPortraitObservationPipeline(
         engines = listOf<PortraitObservationEngine<MlKitImageInput>>(
             faceDetectionEngine,
-            faceMeshEngine,
             poseEngine,
-            segmentationEngine
+            segmentationEngine,
+            faceMeshEngine
         )
     )
 
