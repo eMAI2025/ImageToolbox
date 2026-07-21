@@ -30,8 +30,7 @@ private class FossPortraitLabRunner : PortraitLabRunner {
 
     override suspend fun run(
         uri: Uri,
-        backend: ObservationBackend,
-        repeatedRuns: Int
+        backend: ObservationBackend
     ): PortraitLabRunResult = PortraitLabRunResult.Failure(
         message = "Portrait Lab runtime detectors are available in the Market build only"
     )
