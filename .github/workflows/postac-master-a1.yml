@@ -90,6 +90,15 @@ jobs:
             --stacktrace \
             --no-daemon 2>&1 | tee ci-lint.log
 
+      - name: Record Market runtime dependencies
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew \
+            :app:dependencies \
+            --configuration marketDebugRuntimeClasspath \
+            --no-daemon 2>&1 | tee ci-market-runtime-dependencies.log
+
       - name: Build Market debug APK
         shell: bash
         run: |
@@ -99,13 +108,35 @@ jobs:
             --stacktrace \
             --no-daemon 2>&1 | tee ci-market-apk.log
 
-      - name: Upload Market debug APK
+      - name: Prepare ARM64 test package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          apk_path="$(find app/build/outputs/apk/market/debug -type f -name '*arm64-v8a*.apk' | head -n 1)"
+          if [ -z "$apk_path" ]; then
+            apk_path="$(find app/build/outputs/apk/market/debug -type f -name '*universal*.apk' | head -n 1)"
+          fi
+          if [ -z "$apk_path" ]; then
+            echo "No ARM64 or universal Market debug APK found" >&2
+            find app/build/outputs/apk/market/debug -type f -maxdepth 1 -print >&2 || true
+            exit 1
+          fi
+          cp "$apk_path" dist/portrait-lab-market-arm64-v8a-debug.apk
+          sha256sum dist/portrait-lab-market-arm64-v8a-debug.apk \
+            > dist/portrait-lab-market-arm64-v8a-debug.apk.sha256
+          ls -lh dist
+
+      - name: Upload ARM64 Market debug APK
         if: success()
         uses: actions/upload-artifact@v6
         with:
-          name: portrait-lab-market-debug-apk
+          name: portrait-lab-market-arm64-v8a-debug
           if-no-files-found: error
-          path: app/build/outputs/apk/market/debug/*.apk
+          compression-level: 0
+          path: |
+            dist/portrait-lab-market-arm64-v8a-debug.apk
+            dist/portrait-lab-market-arm64-v8a-debug.apk.sha256
 
       - name: Upload CI diagnostics
         if: always()
