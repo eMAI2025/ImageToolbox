@@ -4,6 +4,9 @@
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -25,6 +28,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -68,11 +72,21 @@ import com.t8rin.imagetoolbox.feature.ai_tools.presentation.components.AiToolsRe
 import com.t8rin.imagetoolbox.feature.ai_tools.presentation.components.AiToolsResultsPreview
 import com.t8rin.imagetoolbox.feature.ai_tools.presentation.components.NeuralSaveProgressDialog
 import com.t8rin.imagetoolbox.feature.ai_tools.presentation.screenLogic.AiToolsComponent
+import com.t8rin.imagetoolbox.feature.portrait_lab.PortraitLabContent
 
 @Composable
 fun AiToolsContent(
     component: AiToolsComponent
 ) {
+    var showPortraitLab by rememberSaveable { mutableStateOf(false) }
+
+    if (showPortraitLab) {
+        PortraitLabContent(
+            onGoBack = { showPortraitLab = false }
+        )
+        return
+    }
+
     val imagePicker = rememberImagePicker { uris: List<Uri> ->
         component.updateUris(
             uris = uris
@@ -281,6 +295,12 @@ fun AiToolsContent(
                 )
             },
             topAppBarPersistentActions = {
+                TextButton(
+                    onClick = { showPortraitLab = true },
+                    enabled = !previewMode
+                ) {
+                    Text("Portrait Lab")
+                }
                 if (component.uris.isNullOrEmpty() || isPreviewMode) {
                     TopAppBarEmoji()
                 }
