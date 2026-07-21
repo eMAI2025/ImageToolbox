@@ -55,6 +55,45 @@ class MediaPipeFaceObservationMapperTest {
             result.classifications.getValue("face_0_blendshape_mouthSmileLeft").probability
         )
         assertEquals(4f, result.pose.yawDegrees)
+        assertTrue("face_0_mediapipe_bounding_box" in result.contours)
+    }
+
+    @Test
+    fun `preserves semantic contours and mesh triangles`() {
+        val points = listOf(
+            MediaPipeFaceLandmarkSnapshot(0, 0.20f, 0.20f, 0f, presence = 0.9f),
+            MediaPipeFaceLandmarkSnapshot(1, 0.80f, 0.20f, 0f, presence = 0.9f),
+            MediaPipeFaceLandmarkSnapshot(2, 0.50f, 0.80f, 0f, presence = 0.9f)
+        )
+        val result = MediaPipeFaceObservationMapper.map(
+            MediaPipeFaceLandmarkerSnapshot(
+                faces = listOf(
+                    MediaPipeFaceSnapshot(
+                        landmarks = points,
+                        contours = listOf(
+                            MediaPipeFaceContourSnapshot(
+                                id = "chin",
+                                pointIndices = listOf(0, 2, 1),
+                                closed = false
+                            )
+                        ),
+                        triangles = listOf(MediaPipeFaceTriangleSnapshot(0, 1, 2))
+                    )
+                )
+            )
+        )
+
+        assertEquals(
+            listOf(
+                "face_0_mediapipe_0",
+                "face_0_mediapipe_2",
+                "face_0_mediapipe_1"
+            ),
+            result.contours.getValue("face_0_mediapipe_contour_chin").vertexIds
+        )
+        val mesh = result.meshes.getValue("face_0_mediapipe_mesh")
+        assertEquals(1, mesh.triangles.size)
+        assertEquals(3, mesh.vertexIds.size)
     }
 
     @Test
