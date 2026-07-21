@@ -45,6 +45,8 @@ sealed interface ObservationPipelineResult {
  * Runs detector backends one by one and merges only observations from the same input.
  *
  * The first backend failure stops the pipeline. Cancellation is never converted into a result.
+ * Binary compatibility failures from optional detector SDKs are contained as backend failures
+ * instead of terminating the application process.
  */
 class SequentialPortraitObservationPipeline<Input>(
     engines: List<PortraitObservationEngine<Input>>,
@@ -74,13 +76,16 @@ class SequentialPortraitObservationPipeline<Input>(
                 engine.observe(input)
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
-                return ObservationPipelineResult.BackendFailure(
-                    backendResults = backendResults.toList(),
-                    failure = ObservationEngineFailure(
-                        backend = engine.backend,
-                        exceptionType = error::class.qualifiedName ?: error::class.simpleName.orEmpty(),
-                        message = error.message
-                    )
+                return backendFailure(
+                    engine = engine,
+                    backendResults = backendResults,
+                    error = error
+                )
+            } catch (error: LinkageError) {
+                return backendFailure(
+                    engine = engine,
+                    backendResults = backendResults,
+                    error = error
                 )
             }
             val finishedAt = nanoTime()
@@ -111,6 +116,19 @@ class SequentialPortraitObservationPipeline<Input>(
             )
         }
     }
+
+    private fun backendFailure(
+        engine: PortraitObservationEngine<Input>,
+        backendResults: List<ObservationBenchmarkResult>,
+        error: Throwable
+    ): ObservationPipelineResult.BackendFailure = ObservationPipelineResult.BackendFailure(
+        backendResults = backendResults.toList(),
+        failure = ObservationEngineFailure(
+            backend = engine.backend,
+            exceptionType = error::class.qualifiedName ?: error::class.simpleName.orEmpty(),
+            message = error.message
+        )
+    )
 
     private companion object {
         const val NANOS_PER_MILLISECOND = 1_000_000L
