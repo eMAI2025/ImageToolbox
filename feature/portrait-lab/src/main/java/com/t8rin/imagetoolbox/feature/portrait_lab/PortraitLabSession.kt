@@ -12,10 +12,12 @@ import android.graphics.Bitmap
 import android.net.Uri
 import com.t8rin.imagetoolbox.lib.portrait_analysis.engine.ObservationBenchmarkResult
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ObservationBackend
+import com.t8rin.imagetoolbox.lib.portrait_analysis.model.SubjectObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.overlay.PortraitOverlayScene
 import com.t8rin.imagetoolbox.lib.portrait_analysis.report.ParameterGateReport
 import com.t8rin.imagetoolbox.lib.portrait_analysis.report.PortraitBackendComparisonReport
 import com.t8rin.imagetoolbox.lib.portrait_analysis.report.PortraitRepeatabilityReport
+import com.t8rin.imagetoolbox.lib.portrait_analysis.visual.VisualProofEvaluation
 
 data class PortraitBackendAvailability(
     val backend: ObservationBackend,
@@ -23,13 +25,30 @@ data class PortraitBackendAvailability(
     val reason: String? = null
 )
 
+data class PortraitSourceMetadata(
+    val encodedWidth: Int,
+    val encodedHeight: Int,
+    val orientedWidth: Int,
+    val orientedHeight: Int,
+    val orientationDegrees: Int,
+    val mirrored: Boolean,
+    val previewWidth: Int,
+    val previewHeight: Int
+)
+
 data class PortraitLabRunOutput(
+    val selectedBackend: ObservationBackend,
     val sourceBitmap: Bitmap,
+    val previewBitmap: Bitmap,
+    val sourceMetadata: PortraitSourceMetadata,
+    val observation: SubjectObservation,
+    val visualProof: VisualProofEvaluation,
     val overlayScene: PortraitOverlayScene,
     val parameterReport: ParameterGateReport,
     val backendComparisonReport: PortraitBackendComparisonReport,
     val repeatabilityReport: PortraitRepeatabilityReport,
     val backendResults: List<ObservationBenchmarkResult>,
+    val runtimeLog: List<String>,
     val warnings: List<String>
 )
 
@@ -47,6 +66,7 @@ interface PortraitLabRunner : AutoCloseable {
 
     suspend fun run(
         uri: Uri,
-        repeatedRuns: Int = 3
+        backend: ObservationBackend = ObservationBackend.ML_KIT_FACE_DETECTION,
+        repeatedRuns: Int = 1
     ): PortraitLabRunResult
 }
