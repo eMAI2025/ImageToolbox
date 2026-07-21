@@ -42,56 +42,112 @@ class MlKitFaceDetectionObservationEngine(
         detector.close()
     }
 
-    private fun toSnapshot(face: Face): MlKitDetectedFaceSnapshot = MlKitDetectedFaceSnapshot(
-        boundingLeftPixels = face.boundingBox.left.toFloat(),
-        boundingTopPixels = face.boundingBox.top.toFloat(),
-        boundingRightPixels = face.boundingBox.right.toFloat(),
-        boundingBottomPixels = face.boundingBox.bottom.toFloat(),
-        yawDegrees = face.headEulerAngleY,
-        pitchDegrees = face.headEulerAngleX,
-        rollDegrees = face.headEulerAngleZ,
-        smilingProbability = face.smilingProbability,
-        leftEyeOpenProbability = face.leftEyeOpenProbability,
-        rightEyeOpenProbability = face.rightEyeOpenProbability,
-        landmarks = LANDMARK_SPECS.mapNotNull { spec ->
-            face.getLandmark(spec.type)?.let { landmark ->
-                MlKitFaceDetectionLandmarkSnapshot(
-                    id = spec.id,
-                    point = MlKitFaceDetectionPointSnapshot(
-                        xPixels = landmark.position.x,
-                        yPixels = landmark.position.y
-                    )
-                )
-            }
-        },
-        contours = CONTOUR_SPECS.mapNotNull { spec ->
+    private fun toSnapshot(face: Face): MlKitDetectedFaceSnapshot {
+        val contours = CONTOUR_SPECS.mapNotNull { spec ->
             face.getContour(spec.type)?.points
                 ?.takeIf { it.isNotEmpty() }
                 ?.let { points ->
                     MlKitFaceDetectionContourSnapshot(
                         id = spec.id,
                         points = points.map { point ->
-                            MlKitFaceDetectionPointSnapshot(
-                                xPixels = point.x,
-                                yPixels = point.y
-                            )
+                            MlKitFaceDetectionPointSnapshot(point.x, point.y)
                         },
                         closed = spec.closed
                     )
                 }
         }
-    )
+        return MlKitDetectedFaceSnapshot(
+            boundingLeftPixels = face.boundingBox.left.toFloat(),
+            boundingTopPixels = face.boundingBox.top.toFloat(),
+            boundingRightPixels = face.boundingBox.right.toFloat(),
+            boundingBottomPixels = face.boundingBox.bottom.toFloat(),
+            yawDegrees = face.headEulerAngleY,
+            pitchDegrees = face.headEulerAngleX,
+            rollDegrees = face.headEulerAngleZ,
+            smilingProbability = face.smilingProbability,
+            leftEyeOpenProbability = face.leftEyeOpenProbability,
+            rightEyeOpenProbability = face.rightEyeOpenProbability,
+            landmarks = LANDMARK_SPECS.mapNotNull { spec ->
+                face.getLandmark(spec.type)?.let { landmark ->
+                    MlKitFaceDetectionLandmarkSnapshot(
+                        id = spec.id,
+                        point = MlKitFaceDetectionPointSnapshot(
+                            landmark.position.x,
+                            landmark.position.y
+                        )
+                    )
+                }
+            },
+            contours = contours + deriveLowerFaceContours(contours)
+        )
+    }
 
-    private data class LandmarkSpec(
-        val id: String,
-        val type: Int
-    )
+    private fun deriveLowerFaceContours(
+        contours: List<MlKitFaceDetectionContourSnapshot>
+    ): List<MlKitFaceDetectionContourSnapshot> {
+        val face = contours.firstOrNull { it.id == "face" && it.points.size >= 7 }
+            ?: return emptyList()
+        val points = face.points
+        val leftIndex = points.indices.minBy { points[it].xPixels }
+        val rightIndex = points.indices.maxBy { points[it].xPixels }
+        val chinIndex = points.indices.maxBy { points[it].yPixels }
+        val forward = cyclicPath(points, leftIndex, rightIndex, step = 1)
+        val backward = cyclicPath(points, leftIndex, rightIndex, step = -1)
+        val jawline = if (chinIndex in forward.indicesFromSource(points, leftIndex, step = 1)) {
+            forward
+        } else {
+            backward
+        }
+        val chinRadius = (points.size / 18).coerceIn(2, 4)
+        val chin = (-chinRadius..chinRadius)
+            .map { offset -> points[(chinIndex + offset).floorMod(points.size)] }
+            .distinct()
 
-    private data class ContourSpec(
-        val id: String,
-        val type: Int,
-        val closed: Boolean
-    )
+        return buildList {
+            if (jawline.size >= 3) {
+                add(MlKitFaceDetectionContourSnapshot("jawline", jawline, closed = false))
+            }
+            if (chin.size >= 3) {
+                add(MlKitFaceDetectionContourSnapshot("chin", chin, closed = false))
+            }
+        }
+    }
+
+    private fun cyclicPath(
+        points: List<MlKitFaceDetectionPointSnapshot>,
+        startIndex: Int,
+        endIndex: Int,
+        step: Int
+    ): List<MlKitFaceDetectionPointSnapshot> {
+        val result = mutableListOf<MlKitFaceDetectionPointSnapshot>()
+        var index = startIndex
+        repeat(points.size) {
+            result += points[index]
+            if (index == endIndex) return result
+            index = (index + step).floorMod(points.size)
+        }
+        return result
+    }
+
+    private fun List<MlKitFaceDetectionPointSnapshot>.indicesFromSource(
+        source: List<MlKitFaceDetectionPointSnapshot>,
+        startIndex: Int,
+        step: Int
+    ): Set<Int> {
+        val selected = toSet()
+        return buildSet {
+            var index = startIndex
+            repeat(source.size) {
+                if (source[index] in selected) add(index)
+                index = (index + step).floorMod(source.size)
+            }
+        }
+    }
+
+    private fun Int.floorMod(modulus: Int): Int = ((this % modulus) + modulus) % modulus
+
+    private data class LandmarkSpec(val id: String, val type: Int)
+    private data class ContourSpec(val id: String, val type: Int, val closed: Boolean)
 
     private companion object {
         val DEFAULT_OPTIONS: FaceDetectorOptions = FaceDetectorOptions.Builder()
@@ -118,17 +174,9 @@ class MlKitFaceDetectionObservationEngine(
         val CONTOUR_SPECS = listOf(
             ContourSpec("face", FaceContour.FACE, closed = true),
             ContourSpec("left_eyebrow_top", FaceContour.LEFT_EYEBROW_TOP, closed = false),
-            ContourSpec(
-                "left_eyebrow_bottom",
-                FaceContour.LEFT_EYEBROW_BOTTOM,
-                closed = false
-            ),
+            ContourSpec("left_eyebrow_bottom", FaceContour.LEFT_EYEBROW_BOTTOM, closed = false),
             ContourSpec("right_eyebrow_top", FaceContour.RIGHT_EYEBROW_TOP, closed = false),
-            ContourSpec(
-                "right_eyebrow_bottom",
-                FaceContour.RIGHT_EYEBROW_BOTTOM,
-                closed = false
-            ),
+            ContourSpec("right_eyebrow_bottom", FaceContour.RIGHT_EYEBROW_BOTTOM, closed = false),
             ContourSpec("left_eye", FaceContour.LEFT_EYE, closed = true),
             ContourSpec("right_eye", FaceContour.RIGHT_EYE, closed = true),
             ContourSpec("upper_lip_top", FaceContour.UPPER_LIP_TOP, closed = false),
