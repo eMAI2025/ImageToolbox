@@ -9,6 +9,7 @@
 package com.t8rin.imagetoolbox.lib.portrait_analysis.visual
 
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.LandmarkObservation
+import com.t8rin.imagetoolbox.lib.portrait_analysis.model.NormalizedPoint3D
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.SubjectObservation
 import kotlin.math.max
 import kotlin.math.min
@@ -60,7 +61,7 @@ object VisualProofEvaluator {
         val landmarks = observation.landmarks.values.sortedBy(LandmarkObservation::id)
         val inFrame = landmarks.filter { it.point.x in 0f..1f && it.point.y in 0f..1f }
         val inFrameRatio = if (landmarks.isEmpty()) 0f else inFrame.size.toFloat() / landmarks.size
-        val spreadRect = normalizedBounds(inFrame)
+        val spreadRect = boundsOfLandmarks(inFrame)
         val spread = spreadRect?.area ?: 0f
         val boundingBox = findBoundingBox(observation)
         val controlPoints = findControlPoints(observation)
@@ -73,34 +74,28 @@ object VisualProofEvaluator {
                 reasons += "No face detected"
                 VisualProofStatus.FAIL
             }
-
             landmarks.isEmpty() -> {
                 reasons += "Detector returned no landmark or contour vertices"
                 VisualProofStatus.FAIL
             }
-
             inFrameRatio < MIN_IN_FRAME_RATIO -> {
                 reasons += "Too many points are outside the normalized image frame"
                 VisualProofStatus.VISUAL_VALIDATION_FAILED
             }
-
             spread < MIN_NORMALIZED_SPREAD -> {
                 reasons += "Landmarks collapse into an implausibly small area"
                 VisualProofStatus.VISUAL_VALIDATION_FAILED
             }
-
             boundingBox == null -> {
                 reasons += "Face geometry exists but no bounding box was preserved"
                 VisualProofStatus.VISUAL_VALIDATION_FAILED
             }
-
             triangleCount > 0 && meshVertexCount >= MIN_MESH_VERTICES_FOR_PASS -> {
                 if (controlPoints.size < requiredControlPointSuffixes.size) {
                     reasons += "Dense mesh is present but not all semantic control points are mapped"
                 }
                 VisualProofStatus.PASS
             }
-
             else -> {
                 if (controlPoints.size < requiredControlPointSuffixes.size) {
                     reasons += "Only ${controlPoints.size}/${requiredControlPointSuffixes.size} control points are available"
@@ -144,13 +139,13 @@ object VisualProofEvaluator {
             it.id.contains("bounding_box") || it.id.contains("bbox")
         } ?: return null
         val points = contour.vertexIds.mapNotNull(observation.landmarks::get).map { it.point }
-        return normalizedBounds(points)
+        return boundsOfPoints(points)
     }
 
-    private fun normalizedBounds(points: Collection<LandmarkObservation>): PixelRect? =
-        normalizedBounds(points.map { it.point })
+    private fun boundsOfLandmarks(points: Collection<LandmarkObservation>): PixelRect? =
+        boundsOfPoints(points.map { it.point })
 
-    private fun normalizedBounds(points: Collection<com.t8rin.imagetoolbox.lib.portrait_analysis.model.NormalizedPoint3D>): PixelRect? {
+    private fun boundsOfPoints(points: Collection<NormalizedPoint3D>): PixelRect? {
         if (points.isEmpty()) return null
         var left = Float.POSITIVE_INFINITY
         var top = Float.POSITIVE_INFINITY
