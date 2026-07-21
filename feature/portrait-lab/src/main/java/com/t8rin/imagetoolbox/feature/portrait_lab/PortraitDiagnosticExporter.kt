@@ -22,7 +22,6 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ConfidenceMask
-import com.t8rin.imagetoolbox.lib.portrait_analysis.overlay.OverlayPoint
 import com.t8rin.imagetoolbox.lib.portrait_analysis.overlay.OverlayPolyline
 import com.t8rin.imagetoolbox.lib.portrait_analysis.overlay.PortraitOverlayScene
 import com.t8rin.imagetoolbox.lib.portrait_analysis.visual.ImageRenderTransform
@@ -45,98 +44,100 @@ data class PortraitOverlayVisibility(
     val contours: Boolean = true,
     val mesh: Boolean = true,
     val masks: Boolean = true
-)
+) {
+    companion object {
+        fun none() = PortraitOverlayVisibility(
+            boundingBox = false,
+            points = false,
+            contours = false,
+            mesh = false,
+            masks = false
+        )
+    }
+}
 
 suspend fun exportPortraitDiagnostics(
     context: Context,
     output: PortraitLabRunOutput,
-    visibility: PortraitOverlayVisibility
+    visibility: PortraitOverlayVisibility,
+    controlPointsOnly: Boolean = false
 ): Result<Uri> = withContext(Dispatchers.IO) {
     runCatching {
         val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"))
-        val root = "portrait_debug_$timestamp"
+        val root = "portrait_visual_proof_$timestamp"
         val target = context.createDiagnosticTarget("$root.zip")
         try {
             ZipOutputStream(target.output).use { zip ->
-                zip.putBitmap("$root/01_source.jpg", output.sourceBitmap, Bitmap.CompressFormat.JPEG, 96)
-                zip.putBitmap("$root/02_source_oriented.png", output.sourceBitmap, Bitmap.CompressFormat.PNG, 100)
-
-                val boundsOnly = renderDiagnosticBitmap(
-                    output,
-                    PortraitOverlayVisibility(
-                        boundingBox = true,
-                        points = true,
-                        contours = false,
-                        mesh = false,
-                        masks = false
+                zip.putBitmap(
+                    "$root/01_source_oriented.png",
+                    output.sourceBitmap,
+                    Bitmap.CompressFormat.PNG,
+                    100
+                )
+                zip.putBitmap(
+                    "$root/02_stage_source.png",
+                    renderDiagnosticBitmap(output, PortraitOverlayVisibility.none()),
+                    Bitmap.CompressFormat.PNG,
+                    100,
+                    recycleAfter = true
+                )
+                zip.putBitmap(
+                    "$root/03_stage_bounding_box.png",
+                    renderDiagnosticBitmap(
+                        output,
+                        VisualProofStage.BOUNDING_BOX.visibility
                     ),
-                    controlPointsOnly = true
+                    Bitmap.CompressFormat.PNG,
+                    100,
+                    recycleAfter = true
                 )
-                zip.putBitmap("$root/03_face_detection.png", boundsOnly, Bitmap.CompressFormat.PNG, 100)
-                boundsOnly.recycle()
-
-                val pointsOnly = renderDiagnosticBitmap(
-                    output,
-                    PortraitOverlayVisibility(
-                        boundingBox = false,
-                        points = true,
-                        contours = false,
-                        mesh = false,
-                        masks = false
-                    )
+                zip.putBitmap(
+                    "$root/04_stage_five_points.png",
+                    renderDiagnosticBitmap(
+                        output,
+                        VisualProofStage.FIVE_POINTS.visibility,
+                        controlPointsOnly = true
+                    ),
+                    Bitmap.CompressFormat.PNG,
+                    100,
+                    recycleAfter = true
                 )
-                zip.putBitmap("$root/04_landmark_points.png", pointsOnly, Bitmap.CompressFormat.PNG, 100)
-                pointsOnly.recycle()
-
-                val contoursOnly = renderDiagnosticBitmap(
-                    output,
-                    PortraitOverlayVisibility(
-                        boundingBox = false,
-                        points = false,
-                        contours = true,
-                        mesh = false,
-                        masks = false
-                    )
+                zip.putBitmap(
+                    "$root/05_stage_contours.png",
+                    renderDiagnosticBitmap(output, VisualProofStage.CONTOURS.visibility),
+                    Bitmap.CompressFormat.PNG,
+                    100,
+                    recycleAfter = true
                 )
-                zip.putBitmap("$root/05_contours.png", contoursOnly, Bitmap.CompressFormat.PNG, 100)
-                contoursOnly.recycle()
-
-                val meshOnly = renderDiagnosticBitmap(
-                    output,
-                    PortraitOverlayVisibility(
-                        boundingBox = false,
-                        points = false,
-                        contours = false,
-                        mesh = true,
-                        masks = false
-                    )
+                zip.putBitmap(
+                    "$root/06_stage_full_mesh.png",
+                    renderDiagnosticBitmap(output, VisualProofStage.FULL_MESH.visibility),
+                    Bitmap.CompressFormat.PNG,
+                    100,
+                    recycleAfter = true
                 )
-                zip.putBitmap("$root/06_mesh_triangles.png", meshOnly, Bitmap.CompressFormat.PNG, 100)
-                meshOnly.recycle()
-
-                val masksOnly = renderDiagnosticBitmap(
-                    output,
-                    PortraitOverlayVisibility(
-                        boundingBox = false,
-                        points = false,
-                        contours = false,
-                        mesh = false,
-                        masks = true
-                    )
+                val masksOnly = PortraitOverlayVisibility.none().copy(masks = true)
+                zip.putBitmap(
+                    "$root/07_masks.png",
+                    renderDiagnosticBitmap(output, masksOnly),
+                    Bitmap.CompressFormat.PNG,
+                    100,
+                    recycleAfter = true
                 )
-                zip.putBitmap("$root/07_masks.png", masksOnly, Bitmap.CompressFormat.PNG, 100)
-                masksOnly.recycle()
-
-                val combined = renderDiagnosticBitmap(output, visibility)
-                zip.putBitmap("$root/08_combined_overlay.png", combined, Bitmap.CompressFormat.PNG, 100)
-                val sideBySide = createSideBySide(output.previewBitmap, combined)
-                zip.putBitmap("$root/09_side_by_side.png", sideBySide, Bitmap.CompressFormat.PNG, 100)
-                sideBySide.recycle()
-                combined.recycle()
+                zip.putBitmap(
+                    "$root/08_current_overlay.png",
+                    renderDiagnosticBitmap(output, visibility, controlPointsOnly),
+                    Bitmap.CompressFormat.PNG,
+                    100,
+                    recycleAfter = true
+                )
 
                 zip.putText("$root/detection_result.json", detectionResultJson(output).toString(2))
-                zip.putText("$root/coordinate_transform.json", transformJson(output).toString(2))
-                zip.putText("$root/backend_status.json", backendStatusJson(output).toString(2))
+                zip.putText(
+                    "$root/coordinate_transform.json",
+                    transformJson(output).toString(2)
+                )
+                zip.putText("$root/visual_status.json", visualStatusJson(output).toString(2))
                 zip.putText("$root/runtime_log.txt", output.runtimeLog.joinToString("\n") + "\n")
             }
             target.complete(context)
@@ -155,7 +156,6 @@ fun renderDiagnosticBitmap(
 ): Bitmap {
     val base = output.previewBitmap.copy(Bitmap.Config.ARGB_8888, true)
         ?: error("Unable to create mutable diagnostic bitmap")
-    val canvas = Canvas(base)
     val transform = ImageRenderTransform.fit(
         sourceWidth = output.sourceMetadata.orientedWidth,
         sourceHeight = output.sourceMetadata.orientedHeight,
@@ -163,7 +163,7 @@ fun renderDiagnosticBitmap(
         previewHeight = base.height
     )
     drawDiagnosticScene(
-        canvas = canvas,
+        canvas = Canvas(base),
         scene = output.overlayScene,
         transform = transform,
         visibility = visibility,
@@ -180,6 +180,7 @@ private fun drawDiagnosticScene(
     controlPointsOnly: Boolean
 ) {
     val stroke = (transform.previewWidth / 420f).coerceIn(2f, 8f)
+
     if (visibility.masks) {
         scene.masks.forEach { overlay ->
             val bitmap = overlay.mask.toColorBitmap()
@@ -198,52 +199,53 @@ private fun drawDiagnosticScene(
             bitmap.recycle()
         }
     }
+
     if (visibility.mesh) {
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(150, 255, 255, 255)
+            color = Color.argb(145, 255, 255, 255)
             style = Paint.Style.STROKE
-            strokeWidth = (stroke * 0.55f).coerceAtLeast(1f)
+            strokeWidth = (stroke * 0.45f).coerceAtLeast(1f)
         }
         scene.triangles.forEach { triangle ->
-            val a = transform.normalizedToPreview(triangle.first)
-            val b = transform.normalizedToPreview(triangle.second)
-            val c = transform.normalizedToPreview(triangle.third)
+            val first = transform.normalizedToPreview(triangle.first)
+            val second = transform.normalizedToPreview(triangle.second)
+            val third = transform.normalizedToPreview(triangle.third)
             val path = Path().apply {
-                moveTo(a.x, a.y)
-                lineTo(b.x, b.y)
-                lineTo(c.x, c.y)
+                moveTo(first.x, first.y)
+                lineTo(second.x, second.y)
+                lineTo(third.x, third.y)
                 close()
             }
             canvas.drawPath(path, paint)
         }
     }
+
     scene.polylines.forEach { polyline ->
-        val isBounding = polyline.id.contains("bounding_box") || polyline.id.contains("bbox")
-        if ((isBounding && !visibility.boundingBox) || (!isBounding && !visibility.contours)) {
+        val bounding = isBoundingBox(polyline.id)
+        if ((bounding && !visibility.boundingBox) || (!bounding && !visibility.contours)) {
             return@forEach
         }
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = colorForId(polyline.id)
             style = Paint.Style.STROKE
-            strokeWidth = if (isBounding) stroke * 1.8f else stroke
+            strokeWidth = if (bounding) stroke * 1.8f else stroke
         }
         drawPolyline(canvas, transform, polyline, paint)
     }
+
     if (visibility.points) {
         scene.points.forEach { point ->
             if (point.id.contains("bounding_box")) return@forEach
-            if (controlPointsOnly && !isControlPoint(point.id) && !point.id.endsWith("detection_center")) {
-                return@forEach
-            }
+            if (controlPointsOnly && !isControlPoint(point.id)) return@forEach
             val mapped = transform.normalizedToPreview(point.position)
             val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = colorForId(point.id)
                 style = Paint.Style.FILL
             }
             val radius = when {
-                point.id.endsWith("detection_center") -> stroke * 2.2f
-                isControlPoint(point.id) -> stroke * 1.7f
-                point.id.contains("mesh_") -> (stroke * 0.55f).coerceAtLeast(1.5f)
+                isControlPoint(point.id) -> stroke * 1.9f
+                point.id.contains("mesh_") || point.id.contains("mediapipe_") ->
+                    (stroke * 0.55f).coerceAtLeast(1.5f)
                 else -> stroke
             }
             canvas.drawCircle(mapped.x, mapped.y, radius, paint)
@@ -266,14 +268,19 @@ private fun drawPolyline(
     canvas.drawPath(path, paint)
 }
 
+private fun isBoundingBox(id: String): Boolean =
+    id.contains("bounding_box") || id.contains("bbox")
+
 private fun colorForId(id: String): Int = when {
-    id.contains("bounding_box") || id.contains("bbox") -> Color.WHITE
-    id.contains("face") && !id.contains("surface") -> Color.RED
+    isBoundingBox(id) -> Color.WHITE
     id.contains("left_eye") -> Color.GREEN
     id.contains("right_eye") -> Color.BLUE
+    id.contains("eyebrow") || id.contains("eye_brow") || id.contains("brow") -> Color.CYAN
     id.contains("nose") -> Color.YELLOW
-    id.contains("lip") || id.contains("mouth") -> Color.MAGENTA
-    id.contains("eyebrow") || id.contains("brow") -> Color.CYAN
+    id.contains("lip") || id.contains("mouth") || id.contains("lips") -> Color.MAGENTA
+    id.contains("jawline") -> Color.rgb(255, 128, 0)
+    id.contains("chin") -> Color.rgb(255, 64, 64)
+    id.contains("face_oval") || id.contains("contour_face") -> Color.RED
     id.contains("center") -> Color.WHITE
     else -> Color.rgb(0, 255, 190)
 }
@@ -283,79 +290,104 @@ private fun isControlPoint(id: String): Boolean =
         id.endsWith("detection_landmark_right_eye") ||
         id.endsWith("detection_landmark_nose_base") ||
         id.endsWith("detection_landmark_mouth_left") ||
-        id.endsWith("detection_landmark_mouth_right")
+        id.endsWith("detection_landmark_mouth_right") ||
+        id == "left_eye_center" ||
+        id == "right_eye_center" ||
+        id == "nose_base" ||
+        id == "mouth_left_corner" ||
+        id == "mouth_right_corner"
 
 private fun ConfidenceMask.toColorBitmap(): Bitmap {
     val pixels = IntArray(size)
     val values = copyValues()
     values.indices.forEach { index ->
-        val confidence = values[index]
-        pixels[index] = Color.argb((confidence * 180f).toInt(), 0, 220, 190)
+        pixels[index] = Color.argb((values[index] * 180f).toInt(), 0, 220, 190)
     }
     return Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
 }
 
-private fun createSideBySide(source: Bitmap, overlay: Bitmap): Bitmap {
-    val result = Bitmap.createBitmap(
-        source.width + overlay.width,
-        maxOf(source.height, overlay.height),
-        Bitmap.Config.ARGB_8888
-    )
-    val canvas = Canvas(result)
-    canvas.drawColor(Color.BLACK)
-    canvas.drawBitmap(source, 0f, 0f, null)
-    canvas.drawBitmap(overlay, source.width.toFloat(), 0f, null)
-    return result
-}
-
 private fun detectionResultJson(output: PortraitLabRunOutput): JSONObject {
-    val proof = output.visualProof
-    val bounding = proof.boundingBox
-    val face = JSONObject()
-        .put("index", 0)
-        .put("landmarkCount", proof.landmarkCount)
-        .put("contourCount", proof.contourCount)
-        .put("triangleCount", proof.triangleCount)
-    if (bounding != null) {
-        face.put(
-            "boundingBox",
+    val transform = ImageRenderTransform.fit(
+        output.sourceMetadata.orientedWidth,
+        output.sourceMetadata.orientedHeight,
+        output.previewBitmap.width,
+        output.previewBitmap.height
+    )
+    val landmarks = JSONArray()
+    output.observation.landmarks.values.sortedBy { it.id }.forEach { landmark ->
+        val source = transform.normalizedToSource(landmark.point)
+        val preview = transform.normalizedToPreview(landmark.point)
+        landmarks.put(
             JSONObject()
-                .put("left", bounding.left * output.sourceMetadata.orientedWidth)
-                .put("top", bounding.top * output.sourceMetadata.orientedHeight)
-                .put("right", bounding.right * output.sourceMetadata.orientedWidth)
-                .put("bottom", bounding.bottom * output.sourceMetadata.orientedHeight)
+                .put("id", landmark.id)
+                .put("xNormalized", landmark.point.x)
+                .put("yNormalized", landmark.point.y)
+                .put("zNormalized", landmark.point.z)
+                .put("xSourcePixels", source.x)
+                .put("ySourcePixels", source.y)
+                .put("xPreviewPixels", preview.x)
+                .put("yPreviewPixels", preview.y)
+                .put("confidence", landmark.confidence ?: JSONObject.NULL)
+                .put("confidenceSource", landmark.confidenceSource.name)
+                .put("visibility", landmark.visibility.name)
+                .put("backend", landmark.backend.name)
         )
     }
-    return JSONObject()
-        .put("backend", output.selectedBackend.name)
-        .put("status", proof.status.name)
-        .put(
-            "sourceImage",
+
+    val contours = JSONArray()
+    output.observation.contours.values.sortedBy { it.id }.forEach { contour ->
+        contours.put(
             JSONObject()
-                .put("width", output.sourceMetadata.orientedWidth)
-                .put("height", output.sourceMetadata.orientedHeight)
-                .put("orientationDegrees", output.sourceMetadata.orientationDegrees)
-                .put("mirrored", output.sourceMetadata.mirrored)
+                .put("id", contour.id)
+                .put("closed", contour.closed)
+                .put("backend", contour.backend.name)
+                .put("vertexIds", JSONArray(contour.vertexIds))
         )
-        .put("faces", JSONArray().put(face))
-        .put("inFrameLandmarkRatio", proof.inFrameLandmarkRatio)
-        .put("normalizedLandmarkSpread", proof.normalizedLandmarkSpread)
-        .put("controlPoints", JSONArray(proof.controlPointIds.toList()))
-        .put("reasons", JSONArray(proof.reasons))
-        .put(
-            "firstTwentyCoordinates",
-            JSONArray().apply {
-                proof.firstTwentyCoordinates.forEach { coordinate ->
-                    put(
-                        JSONObject()
-                            .put("id", coordinate.id)
-                            .put("x", coordinate.x)
-                            .put("y", coordinate.y)
-                            .put("backend", coordinate.backend)
-                    )
-                }
-            }
+    }
+
+    val meshes = JSONArray()
+    output.observation.meshes.values.sortedBy { it.id }.forEach { mesh ->
+        val triangles = JSONArray()
+        mesh.triangles.forEach { triangle ->
+            triangles.put(
+                JSONObject()
+                    .put("first", triangle.firstVertexId)
+                    .put("second", triangle.secondVertexId)
+                    .put("third", triangle.thirdVertexId)
+            )
+        }
+        meshes.put(
+            JSONObject()
+                .put("id", mesh.id)
+                .put("backend", mesh.backend.name)
+                .put("vertexCount", mesh.vertexIds.size)
+                .put("triangleCount", mesh.triangles.size)
+                .put("triangles", triangles)
         )
+    }
+
+    val masks = JSONArray()
+    output.observation.masks.values.sortedBy { it.id }.forEach { mask ->
+        masks.put(
+            JSONObject()
+                .put("id", mask.id)
+                .put("backend", mask.backend.name)
+                .put("width", mask.mask.width)
+                .put("height", mask.mask.height)
+        )
+    }
+
+    return JSONObject()
+        .put("mode", "P1_VISUAL_PROOF")
+        .put("backend", output.selectedBackend.name)
+        .put("status", output.visualProof.status.name)
+        .put("sourceImage", sourceMetadataJson(output))
+        .put("faceCount", output.observation.faceCount)
+        .put("landmarks", landmarks)
+        .put("contours", contours)
+        .put("meshes", meshes)
+        .put("masks", masks)
+        .put("firstTwentyCoordinates", firstTwentyJson(output))
 }
 
 private fun transformJson(output: PortraitLabRunOutput): JSONObject {
@@ -366,10 +398,13 @@ private fun transformJson(output: PortraitLabRunOutput): JSONObject {
         output.previewBitmap.height
     )
     return JSONObject()
+        .put("encodedWidth", output.sourceMetadata.encodedWidth)
+        .put("encodedHeight", output.sourceMetadata.encodedHeight)
+        .put("exifOrientation", output.sourceMetadata.exifOrientation)
+        .put("exifRotationDegrees", output.sourceMetadata.orientationDegrees)
+        .put("mirrored", output.sourceMetadata.mirrored)
         .put("sourceWidth", transform.sourceWidth)
         .put("sourceHeight", transform.sourceHeight)
-        .put("orientedWidth", output.sourceMetadata.orientedWidth)
-        .put("orientedHeight", output.sourceMetadata.orientedHeight)
         .put("previewWidth", transform.previewWidth)
         .put("previewHeight", transform.previewHeight)
         .put("contentScale", transform.contentScale.name)
@@ -378,13 +413,54 @@ private fun transformJson(output: PortraitLabRunOutput): JSONObject {
         .put("renderedHeight", transform.renderedHeight)
         .put("offsetX", transform.offsetX)
         .put("offsetY", transform.offsetY)
+        .put(
+            "sourceToPreviewMatrix3x3",
+            JSONArray(
+                listOf(
+                    transform.scale, 0f, transform.offsetX,
+                    0f, transform.scale, transform.offsetY,
+                    0f, 0f, 1f
+                )
+            )
+        )
+        .put("detectorCoordinateSpace", "normalized_oriented_bitmap")
+        .put("exifAppliedBeforeDetection", true)
+        .put("bitmapAndOverlayShareTransform", true)
 }
 
-private fun backendStatusJson(output: PortraitLabRunOutput): JSONObject = JSONObject()
+private fun sourceMetadataJson(output: PortraitLabRunOutput): JSONObject = JSONObject()
+    .put("encodedWidth", output.sourceMetadata.encodedWidth)
+    .put("encodedHeight", output.sourceMetadata.encodedHeight)
+    .put("orientedWidth", output.sourceMetadata.orientedWidth)
+    .put("orientedHeight", output.sourceMetadata.orientedHeight)
+    .put("previewWidth", output.sourceMetadata.previewWidth)
+    .put("previewHeight", output.sourceMetadata.previewHeight)
+    .put("exifOrientation", output.sourceMetadata.exifOrientation)
+    .put("orientationDegrees", output.sourceMetadata.orientationDegrees)
+    .put("mirrored", output.sourceMetadata.mirrored)
+
+private fun visualStatusJson(output: PortraitLabRunOutput): JSONObject = JSONObject()
     .put("backend", output.selectedBackend.name)
     .put("status", output.visualProof.status.name)
-    .put("warnings", JSONArray(output.warnings))
-    .put("runtimeResultCount", output.backendResults.size)
+    .put("automaticPassAllowed", false)
+    .put("reasons", JSONArray(output.visualProof.reasons))
+    .put("landmarkCount", output.visualProof.landmarkCount)
+    .put("contourCount", output.visualProof.contourCount)
+    .put("triangleCount", output.visualProof.triangleCount)
+    .put("renderedLandmarkSpreadPixels", output.visualProof.renderedLandmarkSpreadPixels)
+    .put("semanticContourGroups", JSONArray(output.visualProof.semanticContourGroups.toList()))
+
+private fun firstTwentyJson(output: PortraitLabRunOutput): JSONArray = JSONArray().apply {
+    output.visualProof.firstTwentyCoordinates.forEach { coordinate ->
+        put(
+            JSONObject()
+                .put("id", coordinate.id)
+                .put("x", coordinate.x)
+                .put("y", coordinate.y)
+                .put("backend", coordinate.backend)
+        )
+    }
+}
 
 private fun ZipOutputStream.putText(path: String, value: String) {
     putNextEntry(ZipEntry(path))
@@ -396,13 +472,18 @@ private fun ZipOutputStream.putBitmap(
     path: String,
     bitmap: Bitmap,
     format: Bitmap.CompressFormat,
-    quality: Int
+    quality: Int,
+    recycleAfter: Boolean = false
 ) {
-    val buffer = ByteArrayOutputStream()
-    check(bitmap.compress(format, quality, buffer)) { "Bitmap compression failed for $path" }
-    putNextEntry(ZipEntry(path))
-    buffer.writeTo(this)
-    closeEntry()
+    try {
+        val buffer = ByteArrayOutputStream()
+        check(bitmap.compress(format, quality, buffer)) { "Bitmap compression failed for $path" }
+        putNextEntry(ZipEntry(path))
+        buffer.writeTo(this)
+        closeEntry()
+    } finally {
+        if (recycleAfter && !bitmap.isRecycled) bitmap.recycle()
+    }
 }
 
 private data class DiagnosticTarget(
