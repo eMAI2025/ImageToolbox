@@ -52,7 +52,7 @@ class MlKitPortraitObservationPipeline(
             add(faceDetectionEngine)
             add(poseEngine)
             add(segmentationEngine)
-            faceMeshEngine?.let(::add)
+            faceMeshEngine?.let { add(it) }
         }
     )
 
@@ -93,11 +93,19 @@ class MlKitPortraitObservationPipeline(
 
     override fun close() {
         val failures = buildList {
-            runCatching { faceDetectionEngine.close() }.exceptionOrNull()?.let(::add)
-            runCatching { poseEngine.close() }.exceptionOrNull()?.let(::add)
-            runCatching { segmentationEngine.close() }.exceptionOrNull()?.let(::add)
+            runCatching { faceDetectionEngine.close() }
+                .exceptionOrNull()
+                ?.let { add(it) }
+            runCatching { poseEngine.close() }
+                .exceptionOrNull()
+                ?.let { add(it) }
+            runCatching { segmentationEngine.close() }
+                .exceptionOrNull()
+                ?.let { add(it) }
             faceMeshEngine?.let { engine ->
-                runCatching { engine.close() }.exceptionOrNull()?.let(::add)
+                runCatching { engine.close() }
+                    .exceptionOrNull()
+                    ?.let { add(it) }
             }
         }
 
