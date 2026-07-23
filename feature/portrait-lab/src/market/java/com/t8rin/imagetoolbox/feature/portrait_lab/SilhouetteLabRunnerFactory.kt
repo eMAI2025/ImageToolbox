@@ -19,6 +19,7 @@ import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodyPoseSkeletonEnric
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodySilhouetteEnricher
 import com.t8rin.imagetoolbox.lib.portrait_analysis.merge.ObservationMergeResult
 import com.t8rin.imagetoolbox.lib.portrait_analysis.merge.SubjectObservationMerger
+import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ObservationBackend
 import com.t8rin.imagetoolbox.lib.portrait_analysis.overlay.PortraitOverlaySceneBuilder
 import com.t8rin.imagetoolbox.lib.portrait_analysis_mlkit.MlKitImageInput
 import com.t8rin.imagetoolbox.lib.portrait_analysis_mlkit.pose.MlKitPoseObservationEngine
@@ -74,6 +75,9 @@ private class MarketSilhouetteLabRunner(
             val observation = enrichment.observation
             val capabilities = bodyRegionCapabilities(observation, enrichment)
             val availableCount = capabilities.count { it.available }
+            val poseLandmarkCount = observation.landmarks.values.count {
+                it.backend == ObservationBackend.ML_KIT_POSE
+            }
             val status = when {
                 observation.bodyCount != 1 ||
                     PortraitRegionId.SUBJECT_MASK !in observation.masks -> SilhouetteVisualStatus.FAILED
@@ -92,7 +96,7 @@ private class MarketSilhouetteLabRunner(
                 add("segmentation_processing_ms=$maskMillis")
                 add("subject_count=${observation.subjectCount}")
                 add("body_count=${observation.bodyCount}")
-                add("pose_landmark_count=${observation.landmarks.values.count { it.backend.name == \"ML_KIT_POSE\" }}")
+                add("pose_landmark_count=$poseLandmarkCount")
                 add("mask_count=${observation.masks.size}")
                 add("derived_region_count=${enrichment.derivedRegionIds.size}")
                 add("silhouette_status=${status.name}")
@@ -193,9 +197,12 @@ private data class DecodedSilhouetteImage(
 
 private fun Context.decodeSilhouetteImage(uri: Uri): DecodedSilhouetteImage {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-    val decoded = contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream)
-        ?: throw IOException("Unable to open image: $uri")
+    contentResolver.openInputStream(uri)?.use { stream ->
+        BitmapFactory.decodeStream(stream, null, bounds)
+    }
+    val decoded = contentResolver.openInputStream(uri)?.use { stream ->
+        BitmapFactory.decodeStream(stream)
+    } ?: throw IOException("Unable to open image: $uri")
     val decodedWidth = decoded.width
     val decodedHeight = decoded.height
 
