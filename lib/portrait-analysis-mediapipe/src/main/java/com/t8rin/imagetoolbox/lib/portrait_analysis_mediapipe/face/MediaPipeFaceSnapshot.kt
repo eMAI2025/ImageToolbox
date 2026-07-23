@@ -195,7 +195,14 @@ object MediaPipeFaceObservationMapper {
             }
         }
 
-        val firstFace = snapshot.faces.firstOrNull()
+        val facePoses = snapshot.faces.mapIndexed { faceIndex, face ->
+            faceIndex to PoseObservation(
+                yawDegrees = face.yawDegrees,
+                pitchDegrees = face.pitchDegrees,
+                rollDegrees = face.rollDegrees
+            )
+        }.toMap()
+
         return SubjectObservation(
             subjectCount = snapshot.faces.size,
             faceCount = snapshot.faces.size,
@@ -205,11 +212,8 @@ object MediaPipeFaceObservationMapper {
             classifications = classifications,
             contours = contours,
             meshes = meshes,
-            pose = PoseObservation(
-                yawDegrees = firstFace?.yawDegrees,
-                pitchDegrees = firstFace?.pitchDegrees,
-                rollDegrees = firstFace?.rollDegrees
-            )
+            pose = facePoses.values.singleOrNull() ?: PoseObservation(),
+            facePoses = facePoses
         )
     }
 

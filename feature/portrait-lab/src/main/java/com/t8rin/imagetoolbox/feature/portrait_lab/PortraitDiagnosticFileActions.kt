@@ -57,7 +57,7 @@ fun copyPortraitTextReport(context: Context, output: PortraitLabRunOutput) {
 fun buildPortraitTextReport(output: PortraitLabRunOutput): String = buildString {
     val proof = output.visualProof
     val metadata = output.sourceMetadata
-    appendLine("P1-VISUAL-PROOF")
+    appendLine("P1-VISUAL-PROOF / P2-REGION-AWARE")
     appendLine("backend=${output.selectedBackend.name}")
     appendLine("status=${proof.status.name}")
     appendLine("encoded=${metadata.encodedWidth}x${metadata.encodedHeight}")
@@ -68,6 +68,22 @@ fun buildPortraitTextReport(output: PortraitLabRunOutput): String = buildString 
     appendLine("contours=${proof.contourCount}")
     appendLine("triangles=${proof.triangleCount}")
     appendLine("rendered_spread=${proof.renderedLandmarkSpreadPixels}")
+    output.faceRegionAwareness?.let { awareness ->
+        appendLine("pose_mode=${awareness.poseMode.name}")
+        appendLine("dominant_image_side=${awareness.dominantImageSide.name}")
+        appendLine("yaw=${awareness.yawDegrees}")
+        appendLine("pitch=${awareness.pitchDegrees}")
+        appendLine("roll=${awareness.rollDegrees}")
+        appendLine("full_face_geometry_allowed=${awareness.fullFaceGeometryAllowed}")
+        awareness.regions.values.forEach { region ->
+            appendLine(
+                "region=${region.region.name};" +
+                    "availability=${region.availability.name};" +
+                    "evidence=${region.evidenceCount};" +
+                    "geometry_allowed=${region.geometryEditAllowed}"
+            )
+        }
+    }
     proof.reasons.forEach { appendLine("reason=$it") }
     output.warnings.forEach { appendLine("warning=$it") }
     appendLine()

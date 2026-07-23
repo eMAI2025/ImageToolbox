@@ -9,6 +9,7 @@
 package com.t8rin.imagetoolbox.feature.portrait_lab
 
 import android.graphics.Bitmap
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.FaceRegionAwarenessAnalyzer
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ClassificationObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ContourObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.LandmarkObservation
@@ -82,7 +83,10 @@ fun focusPortraitOutput(
     val crop = candidate.bounds.expandedForPortrait()
     val sourceCrop = output.sourceBitmap.cropNormalized(crop)
     val previewCrop = output.previewBitmap.cropNormalized(crop)
-    val focusedObservation = output.observation.focusOnFace(candidate.faceIndex, crop)
+    val selectedObservation = output.observation.focusOnFace(candidate.faceIndex, crop)
+    val regionAnalysis = FaceRegionAwarenessAnalyzer.analyzeAndEnrich(selectedObservation)
+    val focusedObservation = regionAnalysis.observation
+    val awareness = regionAnalysis.awareness
     val transform = ImageRenderTransform.fit(
         sourceWidth = sourceCrop.width,
         sourceHeight = sourceCrop.height,
@@ -108,14 +112,26 @@ fun focusPortraitOutput(
         observation = focusedObservation,
         visualProof = visualProof,
         overlayScene = PortraitOverlaySceneBuilder.build(focusedObservation),
-        runtimeLog = output.runtimeLog + listOf(
-            "source_face_count=${output.observation.faceCount}",
-            "active_face_index=${candidate.faceIndex}",
-            "active_face_mode=single_face_crop",
-            "analysis_crop_normalized=${crop.left},${crop.top},${crop.right},${crop.bottom}",
-            "focused_source=${sourceCrop.width}x${sourceCrop.height}",
-            "focused_preview=${previewCrop.width}x${previewCrop.height}"
-        ),
+        faceRegionAwareness = awareness,
+        runtimeLog = output.runtimeLog + buildList {
+            add("source_face_count=${output.observation.faceCount}")
+            add("active_face_index=${candidate.faceIndex}")
+            add("active_face_mode=single_face_crop")
+            add("analysis_crop_normalized=${crop.left},${crop.top},${crop.right},${crop.bottom}")
+            add("focused_source=${sourceCrop.width}x${sourceCrop.height}")
+            add("focused_preview=${previewCrop.width}x${previewCrop.height}")
+            add("p2_pose_mode=${awareness.poseMode.name}")
+            add("p2_dominant_image_side=${awareness.dominantImageSide.name}")
+            add("p2_full_face_geometry_allowed=${awareness.fullFaceGeometryAllowed}")
+            awareness.regions.values.forEach { region ->
+                add(
+                    "p2_region=${region.region.name}," +
+                        "availability=${region.availability.name}," +
+                        "evidence=${region.evidenceCount}," +
+                        "geometry_allowed=${region.geometryEditAllowed}"
+                )
+            }
+        },
         warnings = output.warnings + buildList {
             if (output.observation.faceCount > 1) {
                 add(
@@ -125,6 +141,12 @@ fun focusPortraitOutput(
             }
             if (output.observation.masks.isNotEmpty()) {
                 add("Semantic masks are omitted from the focused crop until mask cropping is implemented.")
+            }
+            if (!awareness.fullFaceGeometryAllowed) {
+                add(
+                    "Full-face geometry is blocked for this pose. " +
+                        "Available image-side, jaw and chin regions remain independently reportable."
+                )
             }
         }
     )
@@ -177,13 +199,17 @@ private fun SubjectObservation.focusOnFace(
         .mapNotNull { mesh -> mesh.remap(faceIndex, selectedLandmarkIds) }
         .toMap()
 
+    val selectedPose = facePoses[faceIndex]
+        ?: if (faceCount == 1) pose else PoseObservation()
+
     return SubjectObservation(
         subjectCount = 1,
         faceCount = 1,
         bodyCount = 0,
         landmarks = selectedLandmarks,
         regions = selectedRegions,
-        pose = if (faceCount == 1) pose else PoseObservation(),
+        pose = selectedPose,
+        facePoses = mapOf(0 to selectedPose),
         classifications = selectedClassifications,
         masks = emptyMap(),
         contours = selectedContours,

@@ -163,9 +163,10 @@ object MlKitFaceDetectionObservationMapper {
             }
         }
 
-        val pose = snapshot.faces.singleOrNull()?.let { face ->
-            PoseObservation(face.yawDegrees, face.pitchDegrees, face.rollDegrees)
-        } ?: PoseObservation()
+        val facePoses = snapshot.faces.mapIndexed { faceIndex, face ->
+            faceIndex to PoseObservation(face.yawDegrees, face.pitchDegrees, face.rollDegrees)
+        }.toMap()
+        val pose = facePoses.values.singleOrNull() ?: PoseObservation()
 
         return SubjectObservation(
             subjectCount = snapshot.faces.size,
@@ -174,6 +175,7 @@ object MlKitFaceDetectionObservationMapper {
             landmarks = landmarks,
             regions = regions,
             pose = pose,
+            facePoses = facePoses,
             classifications = classifications,
             contours = contours
         )
