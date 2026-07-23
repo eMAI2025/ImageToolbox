@@ -118,7 +118,13 @@ data class PoseObservation(
     val yawDegrees: Float? = null,
     val pitchDegrees: Float? = null,
     val rollDegrees: Float? = null
-)
+) {
+    init {
+        require(yawDegrees == null || yawDegrees.isFinite())
+        require(pitchDegrees == null || pitchDegrees.isFinite())
+        require(rollDegrees == null || rollDegrees.isFinite())
+    }
+}
 
 data class SubjectObservation(
     val subjectCount: Int,
@@ -127,6 +133,7 @@ data class SubjectObservation(
     val landmarks: Map<String, LandmarkObservation>,
     val regions: Map<String, RegionObservation>,
     val pose: PoseObservation = PoseObservation(),
+    val facePoses: Map<Int, PoseObservation> = emptyMap(),
     val classifications: Map<String, ClassificationObservation> = emptyMap(),
     val masks: Map<String, SemanticMaskObservation> = emptyMap(),
     val contours: Map<String, ContourObservation> = emptyMap(),
@@ -136,6 +143,9 @@ data class SubjectObservation(
         require(subjectCount >= 0) { "subjectCount cannot be negative" }
         require(faceCount >= 0) { "faceCount cannot be negative" }
         require(bodyCount >= 0) { "bodyCount cannot be negative" }
+        require(facePoses.keys.all { it in 0 until faceCount }) {
+            "face pose keys must reference detected faces"
+        }
         require(landmarks.keys.all { it.isNotBlank() }) { "landmark keys cannot be blank" }
         require(regions.keys.all { it.isNotBlank() }) { "region keys cannot be blank" }
         require(classifications.keys.all { it.isNotBlank() }) {
