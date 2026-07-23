@@ -10,6 +10,7 @@ package com.t8rin.imagetoolbox.feature.portrait_lab
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -51,6 +52,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ObservationBackend
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.time.LocalDateTime
@@ -297,14 +299,14 @@ fun SilhouetteLabContent(
                             output = output,
                             exportState = exportState,
                             onRetry = { startExport(output) },
-                            onSaveCopy = { source ->
+                            onSaveCopy = { source: Uri ->
                                 pendingCopySource = source
                                 val timestamp = LocalDateTime.now().format(
                                     DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")
                                 )
                                 saveCopyLauncher.launch("silhouette_visual_proof_$timestamp.zip")
                             },
-                            onOpen = { source ->
+                            onOpen = { source: Uri ->
                                 fileActionStatus = openPortraitDiagnosticArchive(context, source).fold(
                                     onSuccess = { "Opening silhouette ZIP." },
                                     onFailure = { "Unable to open ZIP: ${it.message}" }
@@ -312,8 +314,8 @@ fun SilhouetteLabContent(
                             },
                             onCopyReport = {
                                 val clipboard = context.getSystemService(
-                                    ClipboardManager::class.java
-                                )
+                                    Context.CLIPBOARD_SERVICE
+                                ) as ClipboardManager
                                 clipboard.setPrimaryClip(
                                     ClipData.newPlainText(
                                         "Silhouette Lab diagnostic report",
@@ -401,7 +403,10 @@ private fun SilhouetteSummaryCard(output: SilhouetteLabRunOutput) {
             Text("Status: ${output.status.name}")
             Text("Subjects: ${output.observation.subjectCount}")
             Text("Bodies: ${output.observation.bodyCount}")
-            Text("Pose landmarks: ${output.observation.landmarks.values.count { it.backend.name == \"ML_KIT_POSE\" }}")
+            val poseLandmarkCount = output.observation.landmarks.values.count {
+                it.backend == ObservationBackend.ML_KIT_POSE
+            }
+            Text("Pose landmarks: $poseLandmarkCount")
             Text("Masks: ${output.observation.masks.size}")
             Text("Derived regions: ${output.enrichment.derivedRegionIds.size}")
             output.regionCapabilities.forEach { region ->
@@ -434,7 +439,8 @@ private fun SilhouetteExportCard(
                 when (exportState) {
                     SilhouetteExportState.Idle -> "ZIP not saved yet."
                     SilhouetteExportState.Saving -> "Saving ZIP in the background."
-                    is SilhouetteExportState.Saved -> "Saved in Downloads/ImageToolbox.\n${exportState.uri}"
+                    is SilhouetteExportState.Saved ->
+                        "Saved in Downloads/ImageToolbox.\n${exportState.uri}"
                     is SilhouetteExportState.Failed -> "Export failed: ${exportState.message}"
                 },
                 style = MaterialTheme.typography.bodySmall
