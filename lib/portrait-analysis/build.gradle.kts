@@ -13,22 +13,14 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- *
- * You should have received a copy of the Apache License
- * along with this program.  If not, see <http://www.apache.org/licenses/LICENSE-2.0>.
  */
 
 plugins {
     alias(libs.plugins.image.toolbox.library)
-    alias(libs.plugins.image.toolbox.feature)
-    alias(libs.plugins.image.toolbox.hilt)
-    alias(libs.plugins.image.toolbox.compose)
 }
 
-android.namespace = "com.t8rin.imagetoolbox.feature.ai_tools"
+android.namespace = "com.t8rin.imagetoolbox.lib.portrait_analysis"
 
 dependencies {
-    implementation(projects.feature.compare)
-    implementation(projects.feature.portraitLab)
-    implementation(projects.lib.neuralTools)
+    testImplementation(libs.junit)
 }

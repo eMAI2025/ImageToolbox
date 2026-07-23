@@ -1,0 +1,170 @@
+name: POSTAC_MASTER A1 CI
+
+on:
+  pull_request:
+    paths:
+      - "app/**"
+      - "feature/ai-tools/**"
+      - "feature/portrait-lab/**"
+      - "lib/portrait-analysis/**"
+      - "lib/portrait-analysis-mlkit/**"
+      - "lib/portrait-analysis-mediapipe/**"
+      - "settings.gradle.kts"
+      - "gradle/**"
+      - ".github/workflows/postac-master-a1.yml"
+  push:
+    branches:
+      - "feature/postac-master-a1-benchmark"
+    paths:
+      - "app/**"
+      - "feature/ai-tools/**"
+      - "feature/portrait-lab/**"
+      - "lib/portrait-analysis/**"
+      - "lib/portrait-analysis-mlkit/**"
+      - "lib/portrait-analysis-mediapipe/**"
+      - "settings.gradle.kts"
+      - "gradle/**"
+      - ".github/workflows/postac-master-a1.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: postac-master-a1-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  portrait-analysis-tests:
+    name: Portrait analysis tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 80
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x ./gradlew
+
+      - name: Assemble portrait modules
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew \
+            :lib:portrait-analysis:assemble \
+            :lib:portrait-analysis-mlkit:assemble \
+            :lib:portrait-analysis-mediapipe:assemble \
+            :feature:portrait-lab:assemble \
+            --stacktrace \
+            --no-daemon 2>&1 | tee ci-assemble.log
+
+      - name: Run portrait module unit tests
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew \
+            :lib:portrait-analysis:test \
+            :lib:portrait-analysis-mlkit:test \
+            :lib:portrait-analysis-mediapipe:test \
+            :feature:portrait-lab:test \
+            --stacktrace \
+            --no-daemon 2>&1 | tee ci-tests.log
+
+      - name: Compile Market device smoke test APK
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew \
+            :lib:portrait-analysis-mlkit:assembleMarketDebugAndroidTest \
+            --stacktrace \
+            --no-daemon 2>&1 | tee ci-device-test-apk.log
+
+      - name: Run portrait module lint
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew \
+            :lib:portrait-analysis:lint \
+            :lib:portrait-analysis-mlkit:lint \
+            :lib:portrait-analysis-mediapipe:lint \
+            :feature:portrait-lab:lint \
+            --stacktrace \
+            --no-daemon 2>&1 | tee ci-lint.log
+
+      - name: Record Market runtime dependencies
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew \
+            :app:dependencies \
+            --configuration marketDebugRuntimeClasspath \
+            --no-daemon 2>&1 | tee ci-market-runtime-dependencies.log
+
+      - name: Build Market debug APK
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew \
+            :app:assembleMarketDebug \
+            --stacktrace \
+            --no-daemon 2>&1 | tee ci-market-apk.log
+
+      - name: Prepare ARM64 test package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          apk_path="$(find app/build/outputs/apk/market/debug -type f -name '*arm64-v8a*.apk' | head -n 1)"
+          if [ -z "$apk_path" ]; then
+            apk_path="$(find app/build/outputs/apk/market/debug -type f -name '*universal*.apk' | head -n 1)"
+          fi
+          if [ -z "$apk_path" ]; then
+            echo "No ARM64 or universal Market debug APK found" >&2
+            find app/build/outputs/apk/market/debug -type f -maxdepth 1 -print >&2 || true
+            exit 1
+          fi
+          cp "$apk_path" dist/portrait-lab-market-arm64-v8a-debug.apk
+          sha256sum dist/portrait-lab-market-arm64-v8a-debug.apk \
+            > dist/portrait-lab-market-arm64-v8a-debug.apk.sha256
+          ls -lh dist
+
+      - name: Upload ARM64 Market debug APK
+        if: success()
+        uses: actions/upload-artifact@v6
+        with:
+          name: portrait-lab-market-arm64-v8a-debug
+          if-no-files-found: error
+          compression-level: 0
+          path: |
+            dist/portrait-lab-market-arm64-v8a-debug.apk
+            dist/portrait-lab-market-arm64-v8a-debug.apk.sha256
+
+      - name: Upload CI diagnostics
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: portrait-analysis-ci-diagnostics
+          if-no-files-found: warn
+          path: |
+            ci-*.log
+            lib/portrait-analysis/build/reports/**
+            lib/portrait-analysis/build/test-results/**
+            lib/portrait-analysis-mlkit/build/reports/**
+            lib/portrait-analysis-mlkit/build/test-results/**
+            lib/portrait-analysis-mlkit/build/outputs/apk/androidTest/**
+            lib/portrait-analysis-mediapipe/build/reports/**
+            lib/portrait-analysis-mediapipe/build/test-results/**
+            feature/portrait-lab/build/reports/**
+            feature/portrait-lab/build/test-results/**

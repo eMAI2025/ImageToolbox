@@ -4,6 +4,9 @@
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -115,6 +118,7 @@ include(":feature:library-details")
 include(":feature:wallpapers-export")
 include(":feature:ascii-art")
 include(":feature:ai-tools")
+include(":feature:portrait-lab")
 include(":feature:color-library")
 include(":feature:app-logs")
 include(":feature:shader-studio")
@@ -135,6 +139,9 @@ include(":core:crash")
 include(":core:ksp")
 include(":core:utils")
 
+include(":lib:portrait-analysis")
+include(":lib:portrait-analysis-mlkit")
+include(":lib:portrait-analysis-mediapipe")
 include(":lib:neural-tools")
 include(":lib:collages")
 include(":lib:ascii")
