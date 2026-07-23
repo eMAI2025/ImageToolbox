@@ -10,6 +10,7 @@ package com.t8rin.imagetoolbox.feature.portrait_lab
 
 import android.graphics.Bitmap
 import android.net.Uri
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.FaceRegionAwareness
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ObservationBackend
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.SubjectObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.overlay.PortraitOverlayScene
@@ -42,7 +43,8 @@ data class PortraitLabRunOutput(
     val visualProof: VisualProofEvaluation,
     val overlayScene: PortraitOverlayScene,
     val runtimeLog: List<String>,
-    val warnings: List<String>
+    val warnings: List<String>,
+    val faceRegionAwareness: FaceRegionAwareness? = null
 )
 
 sealed interface PortraitLabRunResult {
