@@ -60,27 +60,38 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ObservationBackend
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 private sealed interface PortraitLabUiState {
     data object Empty : PortraitLabUiState
     data object Running : PortraitLabUiState
+
     data class SelectFace(
         val sourceOutput: PortraitLabRunOutput,
         val candidates: List<PortraitFaceCandidate>
     ) : PortraitLabUiState
+
     data class TooManyFaces(
         val faceCount: Int
     ) : PortraitLabUiState
+
     data class Complete(
         val sourceOutput: PortraitLabRunOutput,
         val output: PortraitLabRunOutput,
         val candidates: List<PortraitFaceCandidate>,
-        val activeFace: PortraitFaceCandidate,
-        val autoSavedUri: Uri?,
-        val autoSaveStatus: String
+        val activeFace: PortraitFaceCandidate
     ) : PortraitLabUiState
+
     data class Failed(val message: String) : PortraitLabUiState
+}
+
+private sealed interface PortraitExportState {
+    data object Idle : PortraitExportState
+    data object Saving : PortraitExportState
+    data class Saved(val uri: Uri) : PortraitExportState
+    data class Failed(val message: String) : PortraitExportState
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -97,26 +108,76 @@ fun PortraitLabContent(
         mutableStateOf(ObservationBackend.ML_KIT_FACE_DETECTION)
     }
     var state by remember { mutableStateOf<PortraitLabUiState>(PortraitLabUiState.Empty) }
+    var exportState by remember { mutableStateOf<PortraitExportState>(PortraitExportState.Idle) }
+    var exportJob by remember { mutableStateOf<Job?>(null) }
+    var exportGeneration by remember { mutableStateOf(0) }
     var selectedStage by remember { mutableStateOf(VisualProofStage.CONTOURS) }
     var visibility by remember { mutableStateOf(VisualProofStage.CONTOURS.visibility) }
     var controlPointsOnly by remember { mutableStateOf(false) }
     var pendingCopySource by remember { mutableStateOf<Uri?>(null) }
     var fileActionStatus by remember { mutableStateOf<String?>(null) }
 
+    fun resetVisualization() {
+        selectedStage = VisualProofStage.CONTOURS
+        visibility = VisualProofStage.CONTOURS.visibility
+        controlPointsOnly = false
+    }
+
+    fun cancelDiagnosticExport() {
+        exportGeneration += 1
+        exportJob?.cancel()
+        exportJob = null
+        exportState = PortraitExportState.Idle
+    }
+
+    fun resetSession(clearImage: Boolean) {
+        cancelDiagnosticExport()
+        if (clearImage) selectedUri = null
+        state = PortraitLabUiState.Empty
+        resetVisualization()
+        pendingCopySource = null
+        fileActionStatus = null
+    }
+
+    fun startDiagnosticExport(output: PortraitLabRunOutput) {
+        exportJob?.cancel()
+        val generation = exportGeneration + 1
+        exportGeneration = generation
+        exportState = PortraitExportState.Saving
+        exportJob = scope.launch {
+            val result = exportPortraitDiagnostics(
+                context = context,
+                output = output,
+                visibility = PortraitOverlayVisibility(),
+                controlPointsOnly = false
+            )
+            if (generation != exportGeneration) return@launch
+            exportState = result.fold(
+                onSuccess = { PortraitExportState.Saved(it) },
+                onFailure = {
+                    PortraitExportState.Failed(
+                        it.message ?: "Unknown diagnostic export failure"
+                    )
+                }
+            )
+            exportJob = null
+        }
+    }
+
     DisposableEffect(runner) {
-        onDispose { runner.close() }
+        onDispose {
+            exportJob?.cancel()
+            runner.close()
+        }
     }
 
     val picker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
-        selectedUri = uri
-        state = PortraitLabUiState.Empty
-        selectedStage = VisualProofStage.CONTOURS
-        visibility = selectedStage.visibility
-        controlPointsOnly = false
-        pendingCopySource = null
-        fileActionStatus = null
+        if (uri != null) {
+            resetSession(clearImage = false)
+            selectedUri = uri
+        }
     }
 
     val saveCopyLauncher = rememberLauncherForActivityResult(
@@ -146,79 +207,85 @@ fun PortraitLabContent(
     ) {
         state = PortraitLabUiState.Running
         fileActionStatus = null
-        selectedStage = VisualProofStage.CONTOURS
-        visibility = selectedStage.visibility
-        controlPointsOnly = false
+        resetVisualization()
         scope.launch {
-            val focused = focusPortraitOutput(sourceOutput, candidate).getOrElse { error ->
+            try {
+                val focused = focusPortraitOutput(sourceOutput, candidate).getOrElse { error ->
+                    state = PortraitLabUiState.Failed(
+                        "Unable to isolate face ${candidate.faceIndex + 1}: ${error.message}"
+                    )
+                    return@launch
+                }
+
+                state = PortraitLabUiState.Complete(
+                    sourceOutput = sourceOutput,
+                    output = focused,
+                    candidates = candidates,
+                    activeFace = candidate
+                )
+
+                // Export is intentionally detached from the analysis state. A slow ZIP write must
+                // never keep the whole screen in Running or block another test.
+                startDiagnosticExport(focused)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
                 state = PortraitLabUiState.Failed(
-                    "Unable to isolate face ${candidate.faceIndex + 1}: ${error.message}"
+                    "Unable to prepare the active face: ${error.message ?: error::class.simpleName}"
                 )
-                return@launch
             }
-            val autoSave = exportPortraitDiagnostics(
-                context = context,
-                output = focused,
-                visibility = PortraitOverlayVisibility(),
-                controlPointsOnly = false
-            )
-            state = PortraitLabUiState.Complete(
-                sourceOutput = sourceOutput,
-                output = focused,
-                candidates = candidates,
-                activeFace = candidate,
-                autoSavedUri = autoSave.getOrNull(),
-                autoSaveStatus = autoSave.fold(
-                    onSuccess = {
-                        "Saved automatically in Downloads/ImageToolbox.\n$it"
-                    },
-                    onFailure = {
-                        "Automatic save failed: ${it.message}"
-                    }
-                )
-            )
         }
     }
 
     fun runOnce() {
         val uri = selectedUri ?: return
+        cancelDiagnosticExport()
         state = PortraitLabUiState.Running
         fileActionStatus = null
+        resetVisualization()
         scope.launch {
-            when (
-                val result = runner.run(
-                    uri = uri,
-                    backend = selectedBackend
-                )
-            ) {
-                is PortraitLabRunResult.Failure -> {
-                    state = PortraitLabUiState.Failed(
-                        listOfNotNull(result.message, result.exceptionType).joinToString("\n")
+            try {
+                when (
+                    val result = runner.run(
+                        uri = uri,
+                        backend = selectedBackend
                     )
-                }
+                ) {
+                    is PortraitLabRunResult.Failure -> {
+                        state = PortraitLabUiState.Failed(
+                            listOfNotNull(result.message, result.exceptionType).joinToString("\n")
+                        )
+                    }
 
-                is PortraitLabRunResult.Success -> {
-                    val candidates = extractPortraitFaceCandidates(result.output)
-                    when {
-                        candidates.isEmpty() -> {
-                            state = PortraitLabUiState.Failed(
-                                "No selectable face bounding box was returned."
-                            )
-                        }
+                    is PortraitLabRunResult.Success -> {
+                        val candidates = extractPortraitFaceCandidates(result.output)
+                        when {
+                            candidates.isEmpty() -> {
+                                state = PortraitLabUiState.Failed(
+                                    "No selectable face bounding box was returned."
+                                )
+                            }
 
-                        candidates.size > PORTRAIT_MAX_FACE_CANDIDATES -> {
-                            state = PortraitLabUiState.TooManyFaces(candidates.size)
-                        }
+                            candidates.size > PORTRAIT_MAX_FACE_CANDIDATES -> {
+                                state = PortraitLabUiState.TooManyFaces(candidates.size)
+                            }
 
-                        candidates.size == 1 -> {
-                            activateFace(result.output, candidates, candidates.single())
-                        }
+                            candidates.size == 1 -> {
+                                activateFace(result.output, candidates, candidates.single())
+                            }
 
-                        else -> {
-                            state = PortraitLabUiState.SelectFace(result.output, candidates)
+                            else -> {
+                                state = PortraitLabUiState.SelectFace(result.output, candidates)
+                            }
                         }
                     }
                 }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                state = PortraitLabUiState.Failed(
+                    "Unexpected detector failure: ${error.message ?: error::class.simpleName}"
+                )
             }
         }
     }
@@ -253,7 +320,7 @@ fun PortraitLabContent(
             item {
                 StatusCard(
                     title = "Temporary diagnostic policy",
-                    text = "The editor works on exactly one active face. One face is selected automatically. Two faces require an explicit tap. More than two faces are blocked until the image is cropped. Diagnostic ZIP files are saved automatically; no deformation is performed."
+                    text = "The editor works on exactly one active face. One face is selected automatically. Two faces require an explicit tap. More than two faces are blocked until the image is cropped. Diagnostic ZIP export runs in the background and no longer blocks another test. No deformation is performed."
                 )
             }
             item {
@@ -262,7 +329,7 @@ fun PortraitLabContent(
                     selected = selectedBackend,
                     onSelected = {
                         selectedBackend = it
-                        state = PortraitLabUiState.Empty
+                        resetSession(clearImage = false)
                     }
                 )
             }
@@ -278,7 +345,7 @@ fun PortraitLabContent(
                         Text(if (selectedUri == null) "Select image" else "Change image")
                     }
                     Button(
-                        onClick = ::runOnce,
+                        onClick = { runOnce() },
                         enabled = selectedUri != null && state !is PortraitLabUiState.Running,
                         modifier = Modifier.weight(1f)
                     ) {
@@ -300,25 +367,47 @@ fun PortraitLabContent(
                 }
 
                 PortraitLabUiState.Running -> item {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(32.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        CircularProgressIndicator()
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(
+                            modifier = Modifier.padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            CircularProgressIndicator()
+                            Text("Running face analysis...")
+                            Text(
+                                "Only detector analysis blocks this screen. ZIP export is handled separately.",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
                     }
                 }
 
-                is PortraitLabUiState.Failed -> item {
-                    StatusCard("Runtime failed", current.message)
+                is PortraitLabUiState.Failed -> {
+                    item { StatusCard("Runtime failed", current.message) }
+                    item {
+                        RecoveryActionsCard(
+                            onRunAgain = { runOnce() },
+                            onChangeImage = { picker.launch("image/*") },
+                            onNewTest = { resetSession(clearImage = true) }
+                        )
+                    }
                 }
 
-                is PortraitLabUiState.TooManyFaces -> item {
-                    StatusCard(
-                        title = "Too many faces",
-                        text = "Detected ${current.faceCount} faces. The temporary Portrait Lab limit is $PORTRAIT_MAX_FACE_CANDIDATES. Crop the image so that no more than two faces remain, then run again."
-                    )
+                is PortraitLabUiState.TooManyFaces -> {
+                    item {
+                        StatusCard(
+                            title = "Too many faces",
+                            text = "Detected ${current.faceCount} faces. The temporary Portrait Lab limit is $PORTRAIT_MAX_FACE_CANDIDATES. Crop or change the image so that no more than two faces remain, then run again."
+                        )
+                    }
+                    item {
+                        RecoveryActionsCard(
+                            onRunAgain = { runOnce() },
+                            onChangeImage = { picker.launch("image/*") },
+                            onNewTest = { resetSession(clearImage = true) }
+                        )
+                    }
                 }
 
                 is PortraitLabUiState.SelectFace -> {
@@ -335,9 +424,26 @@ fun PortraitLabContent(
                             }
                         )
                     }
+                    item {
+                        RecoveryActionsCard(
+                            onRunAgain = { runOnce() },
+                            onChangeImage = { picker.launch("image/*") },
+                            onNewTest = { resetSession(clearImage = true) }
+                        )
+                    }
                 }
 
                 is PortraitLabUiState.Complete -> {
+                    val meshAvailable = current.output.visualProof.triangleCount > 0
+                    val masksAvailable = current.output.observation.masks.isNotEmpty()
+
+                    item {
+                        ResultActionsCard(
+                            onRunAgain = { runOnce() },
+                            onChangeImage = { picker.launch("image/*") },
+                            onNewTest = { resetSession(clearImage = true) }
+                        )
+                    }
                     item {
                         StatusCard(
                             title = "Active face",
@@ -348,6 +454,7 @@ fun PortraitLabContent(
                         item {
                             OutlinedButton(
                                 onClick = {
+                                    cancelDiagnosticExport()
                                     state = PortraitLabUiState.SelectFace(
                                         current.sourceOutput,
                                         current.candidates
@@ -359,9 +466,19 @@ fun PortraitLabContent(
                             }
                         }
                     }
+                    if (!meshAvailable || !masksAvailable) {
+                        item {
+                            CapabilityStatusCard(
+                                backend = current.output.selectedBackend,
+                                meshAvailable = meshAvailable,
+                                masksAvailable = masksAvailable
+                            )
+                        }
+                    }
                     item {
                         VisualProofStageSelector(
                             selected = selectedStage,
+                            meshAvailable = meshAvailable,
                             onSelected = { stage ->
                                 selectedStage = stage
                                 visibility = stage.visibility
@@ -372,6 +489,8 @@ fun PortraitLabContent(
                     item {
                         OverlayControls(
                             visibility = visibility,
+                            meshAvailable = meshAvailable,
+                            masksAvailable = masksAvailable,
                             onChange = {
                                 visibility = it
                                 selectedStage = VisualProofStage.fromVisibility(it) ?: selectedStage
@@ -390,8 +509,8 @@ fun PortraitLabContent(
                     item {
                         DiagnosticFileCard(
                             output = current.output,
-                            autoSavedUri = current.autoSavedUri,
-                            autoSaveStatus = current.autoSaveStatus,
+                            exportState = exportState,
+                            onRetry = { startDiagnosticExport(current.output) },
                             onSaveCopy = { uri ->
                                 pendingCopySource = uri
                                 saveCopyLauncher.launch(portraitDiagnosticSuggestedFileName())
@@ -435,6 +554,69 @@ fun PortraitLabContent(
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(bottom = 24.dp)
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ResultActionsCard(
+    onRunAgain: () -> Unit,
+    onChangeImage: () -> Unit,
+    onNewTest: () -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text("Continue testing", style = MaterialTheme.typography.titleMedium)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(onClick = onRunAgain, modifier = Modifier.weight(1f)) {
+                    Text("Run again")
+                }
+                OutlinedButton(onClick = onChangeImage, modifier = Modifier.weight(1f)) {
+                    Text("New image")
+                }
+            }
+            TextButton(onClick = onNewTest, modifier = Modifier.fillMaxWidth()) {
+                Text("Clear and start a new test")
+            }
+            Text(
+                "These controls remain active while the diagnostic ZIP is being written.",
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
+}
+
+@Composable
+private fun RecoveryActionsCard(
+    onRunAgain: () -> Unit,
+    onChangeImage: () -> Unit,
+    onNewTest: () -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(onClick = onRunAgain, modifier = Modifier.weight(1f)) {
+                    Text("Try again")
+                }
+                OutlinedButton(onClick = onChangeImage, modifier = Modifier.weight(1f)) {
+                    Text("Change image")
+                }
+            }
+            TextButton(onClick = onNewTest, modifier = Modifier.fillMaxWidth()) {
+                Text("Clear test")
             }
         }
     }
@@ -512,7 +694,10 @@ private fun FaceCandidateSelectionCard(
                         onClick = { onSelected(candidate) },
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("Face ${candidate.faceIndex + 1}${if (index == 0) " — cyan" else " — magenta"}")
+                        Text(
+                            "Face ${candidate.faceIndex + 1}" +
+                                if (index == 0) " — cyan" else " — magenta"
+                        )
                     }
                 }
             }
@@ -523,33 +708,49 @@ private fun FaceCandidateSelectionCard(
 @Composable
 private fun DiagnosticFileCard(
     output: PortraitLabRunOutput,
-    autoSavedUri: Uri?,
-    autoSaveStatus: String,
+    exportState: PortraitExportState,
+    onRetry: () -> Unit,
     onSaveCopy: (Uri) -> Unit,
     onOpen: (Uri) -> Unit,
     onCopyReport: () -> Unit
 ) {
+    val savedUri = (exportState as? PortraitExportState.Saved)?.uri
+    val statusText = when (exportState) {
+        PortraitExportState.Idle -> "Diagnostic ZIP has not been written yet."
+        PortraitExportState.Saving ->
+            "Saving diagnostic ZIP in the background. You may run another test now."
+        is PortraitExportState.Saved ->
+            "Saved automatically in Downloads/ImageToolbox.\n${exportState.uri}"
+        is PortraitExportState.Failed ->
+            "Automatic save failed: ${exportState.message}"
+    }
+
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text("Diagnostic files", style = MaterialTheme.typography.titleMedium)
-            Text(autoSaveStatus, style = MaterialTheme.typography.bodySmall)
+            Text(statusText, style = MaterialTheme.typography.bodySmall)
+            if (exportState is PortraitExportState.Failed || exportState is PortraitExportState.Idle) {
+                Button(onClick = onRetry, modifier = Modifier.fillMaxWidth()) {
+                    Text("Save diagnostic ZIP")
+                }
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Button(
-                    onClick = { autoSavedUri?.let(onSaveCopy) },
-                    enabled = autoSavedUri != null,
+                    onClick = { savedUri?.let(onSaveCopy) },
+                    enabled = savedUri != null,
                     modifier = Modifier.weight(1f)
                 ) {
                     Text("Save copy...")
                 }
                 OutlinedButton(
-                    onClick = { autoSavedUri?.let(onOpen) },
-                    enabled = autoSavedUri != null,
+                    onClick = { savedUri?.let(onOpen) },
+                    enabled = savedUri != null,
                     modifier = Modifier.weight(1f)
                 ) {
                     Text("Open ZIP")
@@ -574,10 +775,42 @@ private fun DiagnosticFileCard(
 }
 
 @Composable
+private fun CapabilityStatusCard(
+    backend: ObservationBackend,
+    meshAvailable: Boolean,
+    masksAvailable: Boolean
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text("Backend capability", style = MaterialTheme.typography.titleMedium)
+            Text("Backend: ${backend.name}")
+            if (!meshAvailable) {
+                Text(
+                    "Dense face mesh is not available in this result. ML Kit Face Detection returns bounding boxes, landmarks and contours, but no mesh triangles. The Mesh stage is therefore disabled rather than shown as an empty result."
+                )
+            }
+            if (!masksAvailable) {
+                Text(
+                    "No semantic masks were returned by this backend. The Masks layer is disabled.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun VisualProofStageSelector(
     selected: VisualProofStage,
+    meshAvailable: Boolean,
     onSelected: (VisualProofStage) -> Unit
 ) {
+    val stages = VisualProofStage.entries.filter {
+        it != VisualProofStage.FULL_MESH || meshAvailable
+    }
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(12.dp),
@@ -588,7 +821,7 @@ private fun VisualProofStageSelector(
                 modifier = Modifier.horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                VisualProofStage.entries.forEach { stage ->
+                stages.forEach { stage ->
                     FilterChip(
                         selected = selected == stage,
                         onClick = { onSelected(stage) },
@@ -630,9 +863,14 @@ private fun FaceBackendSelector(
                     )
                 }
             }
-            availability.firstOrNull { it.backend == selected }?.reason?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall)
-            }
+            availability
+                .filter { it.backend in options && !it.available }
+                .forEach { item ->
+                    Text(
+                        "${item.backend.name}: ${item.reason ?: "not available"}",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
         }
     }
 }
@@ -640,6 +878,8 @@ private fun FaceBackendSelector(
 @Composable
 private fun OverlayControls(
     visibility: PortraitOverlayVisibility,
+    meshAvailable: Boolean,
+    masksAvailable: Boolean,
     onChange: (PortraitOverlayVisibility) -> Unit
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -668,14 +908,16 @@ private fun OverlayControls(
                     label = { Text("Contours") }
                 )
                 FilterChip(
-                    selected = visibility.mesh,
+                    selected = visibility.mesh && meshAvailable,
                     onClick = { onChange(visibility.copy(mesh = !visibility.mesh)) },
-                    label = { Text("Mesh") }
+                    enabled = meshAvailable,
+                    label = { Text(if (meshAvailable) "Mesh" else "Mesh unavailable") }
                 )
                 FilterChip(
-                    selected = visibility.masks,
+                    selected = visibility.masks && masksAvailable,
                     onClick = { onChange(visibility.copy(masks = !visibility.masks)) },
-                    label = { Text("Masks") }
+                    enabled = masksAvailable,
+                    label = { Text(if (masksAvailable) "Masks" else "Masks unavailable") }
                 )
             }
         }
