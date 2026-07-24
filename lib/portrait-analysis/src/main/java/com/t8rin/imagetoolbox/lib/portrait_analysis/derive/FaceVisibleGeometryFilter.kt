@@ -13,7 +13,6 @@ import com.t8rin.imagetoolbox.lib.portrait_analysis.model.LandmarkObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.MeshObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.NormalizedPoint3D
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.SubjectObservation
-import kotlin.math.abs
 
 /**
  * Result of converting a detector's full-face proposal into trusted visible geometry.
@@ -60,32 +59,11 @@ object FaceVisibleGeometryFilter {
         val side = awareness.dominantImageSide
 
         if (!shouldFilter || side !in setOf(FaceImageSide.LEFT, FaceImageSide.RIGHT)) {
-            return FaceVisibleGeometryResult(
-                observation = observation,
-                applied = false,
-                activeImageSide = side,
-                rawLandmarkCount = observation.landmarks.size,
-                visibleLandmarkCount = observation.landmarks.size,
-                rawContourCount = observation.contours.size,
-                visibleContourCount = observation.contours.size,
-                splitContourCount = 0,
-                rawTriangleCount = rawTriangleCount,
-                visibleTriangleCount = rawTriangleCount
-            )
+            return unchanged(observation, side, rawTriangleCount)
         }
 
-        val bounds = observation.faceBounds() ?: return FaceVisibleGeometryResult(
-            observation = observation,
-            applied = false,
-            activeImageSide = side,
-            rawLandmarkCount = observation.landmarks.size,
-            visibleLandmarkCount = observation.landmarks.size,
-            rawContourCount = observation.contours.size,
-            visibleContourCount = observation.contours.size,
-            splitContourCount = 0,
-            rawTriangleCount = rawTriangleCount,
-            visibleTriangleCount = rawTriangleCount
-        )
+        val bounds = observation.faceBounds()
+            ?: return unchanged(observation, side, rawTriangleCount)
         val axisX = observation.faceAxisX(bounds)
         val corridor = bounds.width * when (awareness.poseMode) {
             FacePoseMode.PROFILE -> PROFILE_CENTER_CORRIDOR_FACTOR
@@ -169,6 +147,23 @@ object FaceVisibleGeometryFilter {
         )
     }
 
+    private fun unchanged(
+        observation: SubjectObservation,
+        side: FaceImageSide,
+        rawTriangleCount: Int
+    ) = FaceVisibleGeometryResult(
+        observation = observation,
+        applied = false,
+        activeImageSide = side,
+        rawLandmarkCount = observation.landmarks.size,
+        visibleLandmarkCount = observation.landmarks.size,
+        rawContourCount = observation.contours.size,
+        visibleContourCount = observation.contours.size,
+        splitContourCount = 0,
+        rawTriangleCount = rawTriangleCount,
+        visibleTriangleCount = rawTriangleCount
+    )
+
     private data class Bounds(
         val left: Float,
         val right: Float
@@ -209,7 +204,7 @@ object FaceVisibleGeometryFilter {
         return nosePoints
             .map { it.point.x }
             .average()
-            .takeUnless(Double::isNaN)
+            .takeUnless { it.isNaN() }
             ?.toFloat()
             ?.coerceIn(bounds.left, bounds.right)
             ?: bounds.centerX
@@ -293,7 +288,8 @@ object FaceVisibleGeometryFilter {
             value.contains("mouth") ||
             value.contains("lip") ||
             value.contains("chin") ||
-            value.endsWith("_center")
+            value.endsWith("detection_center") ||
+            value == "face_center"
     }
 
     private fun isBoundingContour(contour: ContourObservation): Boolean =
