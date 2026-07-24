@@ -11,6 +11,8 @@ package com.t8rin.imagetoolbox.lib.portrait_analysis.derive
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ConfidenceSource
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ContourObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.LandmarkObservation
+import com.t8rin.imagetoolbox.lib.portrait_analysis.model.MeshObservation
+import com.t8rin.imagetoolbox.lib.portrait_analysis.model.MeshTriangleObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.NormalizedPoint3D
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ObservationBackend
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.PoseObservation
@@ -25,9 +27,8 @@ class FaceVisibleGeometryFilterTest {
 
     @Test
     fun `profile keeps visible side and opens the full face contour`() {
-        val observation = profileObservation()
         val result = FaceVisibleGeometryFilter.filter(
-            observation = observation,
+            observation = profileObservation(),
             awareness = awareness(FacePoseMode.PROFILE, FaceImageSide.LEFT)
         )
 
@@ -45,10 +46,124 @@ class FaceVisibleGeometryFilterTest {
         assertTrue(visibleFaceSegments.isNotEmpty())
         assertTrue(visibleFaceSegments.all { !it.closed })
         assertTrue(
-            visibleFaceSegments
-                .flatMap { it.vertexIds }
-                .all { id -> result.observation.landmarks.getValue(id).point.x <= 0.57f }
+            visibleFaceSegments.flatMap { it.vertexIds }.all { id ->
+                result.observation.landmarks.getValue(id).point.x <= 0.57f
+            }
         )
+    }
+
+    @Test
+    fun `right profile mirrors hidden-side filtering`() {
+        val result = FaceVisibleGeometryFilter.filter(
+            observation = profileObservation(),
+            awareness = awareness(FacePoseMode.PROFILE, FaceImageSide.RIGHT)
+        )
+
+        assertTrue(result.applied)
+        assertFalse("left_eye_center" in result.observation.landmarks)
+        assertTrue("right_eye_center" in result.observation.landmarks)
+        assertFalse("left_eye_contour" in result.observation.contours)
+        assertTrue("right_eye_contour" in result.observation.contours)
+        assertFalse("face_contour" in result.observation.contours)
+        assertTrue(
+            result.observation.contours.values
+                .filter { it.id.startsWith("face_contour_visible_segment_") }
+                .flatMap { it.vertexIds }
+                .all { id -> result.observation.landmarks.getValue(id).point.x >= 0.43f }
+        )
+    }
+
+    @Test
+    fun `half profile uses wider center corridor and preserves central geometry`() {
+        val result = FaceVisibleGeometryFilter.filter(
+            observation = profileObservation(),
+            awareness = awareness(FacePoseMode.HALF_PROFILE, FaceImageSide.LEFT)
+        )
+
+        assertTrue(result.applied)
+        assertTrue("nose_base" in result.observation.landmarks)
+        assertTrue("mouth_left" in result.observation.landmarks)
+        assertTrue("mouth_right" in result.observation.landmarks)
+        assertTrue("chin_center" in result.observation.landmarks)
+        assertFalse("right_eye_center" in result.observation.landmarks)
+        assertFalse("face_contour" in result.observation.contours)
+    }
+
+    @Test
+    fun `mesh drops hidden triangles and retains visible triangles`() {
+        val source = profileObservation().copy(
+            meshes = mapOf(
+                "face_mesh" to MeshObservation(
+                    id = "face_mesh",
+                    vertexIds = setOf(
+                        "left_eye_a",
+                        "left_eye_b",
+                        "nose_base",
+                        "right_eye_a",
+                        "right_eye_b"
+                    ),
+                    triangles = listOf(
+                        MeshTriangleObservation("left_eye_a", "left_eye_b", "nose_base"),
+                        MeshTriangleObservation("right_eye_a", "right_eye_b", "nose_base")
+                    ),
+                    backend = ObservationBackend.ML_KIT_FACE_DETECTION
+                )
+            )
+        )
+
+        val result = FaceVisibleGeometryFilter.filter(
+            observation = source,
+            awareness = awareness(FacePoseMode.PROFILE, FaceImageSide.LEFT)
+        )
+
+        val mesh = result.observation.meshes.getValue("face_mesh")
+        assertEquals(2, result.rawTriangleCount)
+        assertEquals(1, result.visibleTriangleCount)
+        assertEquals(1, mesh.triangles.size)
+        assertTrue(mesh.triangles.single().vertexIds.contains("left_eye_a"))
+        assertFalse(mesh.vertexIds.contains("right_eye_a"))
+    }
+
+    @Test
+    fun `closed contour can split into multiple open visible runs`() {
+        val source = profileObservation().copy(
+            contours = profileObservation().contours + (
+                "alternating_contour" to contour(
+                    "alternating_contour",
+                    listOf("left_eye_a", "right_eye_a", "left_eye_b", "right_eye_b", "nose_base"),
+                    true
+                )
+            )
+        )
+
+        val result = FaceVisibleGeometryFilter.filter(
+            observation = source,
+            awareness = awareness(FacePoseMode.PROFILE, FaceImageSide.LEFT)
+        )
+
+        val segments = result.observation.contours.values.filter {
+            it.id.startsWith("alternating_contour_visible_segment_")
+        }
+        assertTrue(segments.size >= 2)
+        assertTrue(segments.all { !it.closed })
+        assertFalse("alternating_contour" in result.observation.contours)
+    }
+
+    @Test
+    fun `missing nose landmarks falls back to face bounds center`() {
+        val source = profileObservation().copy(
+            landmarks = profileObservation().landmarks - "nose_base",
+            contours = profileObservation().contours - "mouth_contour"
+        )
+
+        val result = FaceVisibleGeometryFilter.filter(
+            observation = source,
+            awareness = awareness(FacePoseMode.PROFILE, FaceImageSide.LEFT)
+        )
+
+        assertTrue(result.applied)
+        assertFalse("right_eye_center" in result.observation.landmarks)
+        assertTrue("left_eye_center" in result.observation.landmarks)
     }
 
     @Test
@@ -69,7 +184,11 @@ class FaceVisibleGeometryFilterTest {
     ) = FaceRegionAwareness(
         poseMode = poseMode,
         dominantImageSide = side,
-        yawDegrees = if (poseMode == FacePoseMode.FRONTAL) 0f else 58f,
+        yawDegrees = when (side) {
+            FaceImageSide.LEFT -> 58f
+            FaceImageSide.RIGHT -> -58f
+            else -> 0f
+        },
         pitchDegrees = 0f,
         rollDegrees = 0f,
         fullFaceGeometryAllowed = poseMode == FacePoseMode.FRONTAL,
