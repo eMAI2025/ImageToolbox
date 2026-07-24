@@ -8,8 +8,6 @@
 
 package com.t8rin.imagetoolbox.lib.portrait_analysis.overlay
 
-import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.FaceRegionAwarenessAnalyzer
-import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.FaceVisibleGeometryFilter
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ConfidenceMask
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ConfidenceSource
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.NormalizedPoint3D
@@ -83,10 +81,8 @@ object PortraitOverlaySceneBuilder {
         observation: SubjectObservation,
         options: PortraitOverlayOptions = PortraitOverlayOptions()
     ): PortraitOverlayScene {
-        val overlayObservation = observation.visibleGeometryForOverlay()
-
         val points = if (options.includePoints) {
-            overlayObservation.landmarks.values
+            observation.landmarks.values
                 .asSequence()
                 .filter { it.backend in options.includedBackends }
                 .filter {
@@ -110,7 +106,7 @@ object PortraitOverlaySceneBuilder {
         }
 
         val polylines = if (options.includeContours) {
-            overlayObservation.contours.values
+            observation.contours.values
                 .asSequence()
                 .filter { it.backend in options.includedBackends }
                 .sortedBy { it.id }
@@ -118,7 +114,7 @@ object PortraitOverlaySceneBuilder {
                     OverlayPolyline(
                         id = contour.id,
                         points = contour.vertexIds.map { vertexId ->
-                            overlayObservation.landmarks.getValue(vertexId).point
+                            observation.landmarks.getValue(vertexId).point
                         },
                         closed = contour.closed,
                         backend = contour.backend,
@@ -132,7 +128,7 @@ object PortraitOverlaySceneBuilder {
         }
 
         val triangles = if (options.includeMeshTriangles) {
-            overlayObservation.meshes.values
+            observation.meshes.values
                 .asSequence()
                 .filter { it.backend in options.includedBackends }
                 .sortedBy { it.id }
@@ -140,13 +136,13 @@ object PortraitOverlaySceneBuilder {
                     mesh.triangles.asSequence().mapIndexed { index, triangle ->
                         OverlayTriangle(
                             id = "${mesh.id}_triangle_$index",
-                            first = overlayObservation.landmarks.getValue(
+                            first = observation.landmarks.getValue(
                                 triangle.firstVertexId
                             ).point,
-                            second = overlayObservation.landmarks.getValue(
+                            second = observation.landmarks.getValue(
                                 triangle.secondVertexId
                             ).point,
-                            third = overlayObservation.landmarks.getValue(
+                            third = observation.landmarks.getValue(
                                 triangle.thirdVertexId
                             ).point,
                             backend = mesh.backend
@@ -159,7 +155,7 @@ object PortraitOverlaySceneBuilder {
         }
 
         val masks = if (options.includeMasks) {
-            overlayObservation.masks.values
+            observation.masks.values
                 .asSequence()
                 .filter { it.backend in options.includedBackends }
                 .sortedBy { it.id }
@@ -181,13 +177,5 @@ object PortraitOverlaySceneBuilder {
             triangles = triangles,
             masks = masks
         )
-    }
-
-    private fun SubjectObservation.visibleGeometryForOverlay(): SubjectObservation {
-        if (faceCount != 1) return this
-        val analysis = FaceRegionAwarenessAnalyzer.analyzeAndEnrich(this)
-        return FaceVisibleGeometryFilter
-            .filter(analysis.observation, analysis.awareness)
-            .observation
     }
 }
