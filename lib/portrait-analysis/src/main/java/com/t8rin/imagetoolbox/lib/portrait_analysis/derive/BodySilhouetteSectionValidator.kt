@@ -23,7 +23,8 @@ import kotlin.math.hypot
  * 1. its width is plausible relative to the local pose-bone length;
  * 2. its midpoint remains close to the expected local pose-bone segment.
  *
- * Missing or degenerate local pose evidence fails closed. No invisible anatomy is inferred.
+ * Missing or degenerate local pose evidence fails closed. After limb validation, torso sections are
+ * passed through [BodyTorsoSectionValidator] so crossed arms cannot be accepted as torso width.
  */
 enum class BodySectionRejectionReason {
     WIDTH_OUTLIER,
@@ -131,123 +132,141 @@ object BodySilhouetteSectionValidator {
 
         val observation = enrichment.observation
         val rejected = rules.mapNotNull { rule ->
-            val contour = observation.contours[rule.sectionId] ?: return@mapNotNull null
-            if (contour.vertexIds.size != 2) {
-                return@mapNotNull rule.rejection(
-                    reason = BodySectionRejectionReason.MALFORMED_SECTION
-                )
-            }
-
-            val firstSectionPoint = observation.landmarks[contour.vertexIds.first()]?.point
-            val secondSectionPoint = observation.landmarks[contour.vertexIds.last()]?.point
-            val firstBonePoint = observation.landmarks[rule.firstPoseLandmarkId]?.point
-            val secondBonePoint = observation.landmarks[rule.secondPoseLandmarkId]?.point
-            if (
-                firstSectionPoint == null ||
-                secondSectionPoint == null ||
-                firstBonePoint == null ||
-                secondBonePoint == null
-            ) {
-                return@mapNotNull rule.rejection(
-                    reason = BodySectionRejectionReason.MISSING_LOCAL_EVIDENCE
-                )
-            }
-
-            val measuredPixels = pixelDistance(
-                firstSectionPoint,
-                secondSectionPoint,
-                sourceWidth,
-                sourceHeight
-            )
-            val referencePixels = pixelDistance(
-                firstBonePoint,
-                secondBonePoint,
-                sourceWidth,
-                sourceHeight
-            )
-            if (referencePixels <= 1f) {
-                return@mapNotNull rule.rejection(
-                    reason = BodySectionRejectionReason.DEGENERATE_LOCAL_BONE,
-                    measuredPixels = measuredPixels,
-                    referenceBonePixels = referencePixels
-                )
-            }
-
-            val measuredRatio = measuredPixels / referencePixels
-            val sectionMidpoint = NormalizedPoint3D(
-                x = (firstSectionPoint.x + secondSectionPoint.x) / 2f,
-                y = (firstSectionPoint.y + secondSectionPoint.y) / 2f,
-                z = (firstSectionPoint.z + secondSectionPoint.z) / 2f
-            )
-            val midpointDistancePixels = pixelDistanceToSegment(
-                point = sectionMidpoint,
-                segmentStart = firstBonePoint,
-                segmentEnd = secondBonePoint,
+            validateRule(
+                rule = rule,
+                enrichment = enrichment,
                 sourceWidth = sourceWidth,
                 sourceHeight = sourceHeight
             )
-            val midpointDistanceRatio = midpointDistancePixels / referencePixels
-
-            when {
-                measuredRatio > rule.maximumMeasuredToBoneRatio -> rule.rejection(
-                    reason = BodySectionRejectionReason.WIDTH_OUTLIER,
-                    measuredPixels = measuredPixels,
-                    referenceBonePixels = referencePixels,
-                    measuredToBoneRatio = measuredRatio,
-                    midpointDistancePixels = midpointDistancePixels,
-                    midpointDistanceToBoneRatio = midpointDistanceRatio
-                )
-
-                midpointDistanceRatio > rule.maximumMidpointDistanceToBoneRatio -> rule.rejection(
-                    reason = BodySectionRejectionReason.SECTION_NON_LOCAL,
-                    measuredPixels = measuredPixels,
-                    referenceBonePixels = referencePixels,
-                    measuredToBoneRatio = measuredRatio,
-                    midpointDistancePixels = midpointDistancePixels,
-                    midpointDistanceToBoneRatio = midpointDistanceRatio
-                )
-
-                else -> null
-            }
         }
 
-        if (rejected.isEmpty()) {
-            return BodySectionValidationResult(enrichment, emptyList())
-        }
-
-        val rejectedSectionIds = rejected.mapTo(linkedSetOf(), BodySectionRejection::sectionId)
-        val rejectedRegionIds = rejected.mapTo(linkedSetOf(), BodySectionRejection::aggregateRegionId)
-        val rejectedEndpointIds = rejectedSectionIds.flatMapTo(linkedSetOf()) { sectionId ->
-            observation.contours[sectionId]?.vertexIds.orEmpty()
-        }
-
-        val filteredObservation = observation.copy(
-            landmarks = observation.landmarks - rejectedEndpointIds,
-            regions = observation.regions - rejectedRegionIds,
-            contours = observation.contours - rejectedSectionIds
-        )
-        val addedSkips = rejected.map { rejection ->
-            BodySilhouetteSkippedSection(
-                sectionId = rejection.sectionId,
-                reason = BodySilhouetteSkipReason.MASK_CROSS_SECTION_NOT_FOUND,
-                itemId = buildString {
-                    append(rejection.reason.name)
-                    append("_WIDTH_RATIO_")
-                    append(rejection.measuredToBoneRatio)
-                    append("_MIDPOINT_RATIO_")
-                    append(rejection.midpointDistanceToBoneRatio)
-                }
+        val limbFilteredEnrichment = if (rejected.isEmpty()) {
+            enrichment
+        } else {
+            val rejectedSectionIds = rejected.mapTo(
+                linkedSetOf(),
+                BodySectionRejection::sectionId
             )
-        }
-
-        return BodySectionValidationResult(
-            enrichment = BodySilhouetteEnrichmentResult(
+            val rejectedRegionIds = rejected.mapTo(
+                linkedSetOf(),
+                BodySectionRejection::aggregateRegionId
+            )
+            val rejectedEndpointIds = rejectedSectionIds.flatMapTo(linkedSetOf()) { sectionId ->
+                observation.contours[sectionId]?.vertexIds.orEmpty()
+            }
+            val filteredObservation = observation.copy(
+                landmarks = observation.landmarks - rejectedEndpointIds,
+                regions = observation.regions - rejectedRegionIds,
+                contours = observation.contours - rejectedSectionIds
+            )
+            val addedSkips = rejected.map { rejection ->
+                BodySilhouetteSkippedSection(
+                    sectionId = rejection.sectionId,
+                    reason = BodySilhouetteSkipReason.MASK_CROSS_SECTION_NOT_FOUND,
+                    itemId = buildString {
+                        append(rejection.reason.name)
+                        append("_WIDTH_RATIO_")
+                        append(rejection.measuredToBoneRatio)
+                        append("_MIDPOINT_RATIO_")
+                        append(rejection.midpointDistanceToBoneRatio)
+                    }
+                )
+            }
+            BodySilhouetteEnrichmentResult(
                 observation = filteredObservation,
                 derivedRegionIds = enrichment.derivedRegionIds - rejectedRegionIds,
                 skippedSections = enrichment.skippedSections + addedSkips
-            ),
+            )
+        }
+
+        val torsoValidation = BodyTorsoSectionValidator.validate(limbFilteredEnrichment)
+        return BodySectionValidationResult(
+            enrichment = torsoValidation.enrichment,
             rejectedSections = rejected
         )
+    }
+
+    private fun validateRule(
+        rule: Rule,
+        enrichment: BodySilhouetteEnrichmentResult,
+        sourceWidth: Int,
+        sourceHeight: Int
+    ): BodySectionRejection? {
+        val observation = enrichment.observation
+        val contour = observation.contours[rule.sectionId] ?: return null
+        if (contour.vertexIds.size != 2) {
+            return rule.rejection(BodySectionRejectionReason.MALFORMED_SECTION)
+        }
+
+        val firstSectionPoint = observation.landmarks[contour.vertexIds.first()]?.point
+        val secondSectionPoint = observation.landmarks[contour.vertexIds.last()]?.point
+        val firstBonePoint = observation.landmarks[rule.firstPoseLandmarkId]?.point
+        val secondBonePoint = observation.landmarks[rule.secondPoseLandmarkId]?.point
+        if (
+            firstSectionPoint == null ||
+            secondSectionPoint == null ||
+            firstBonePoint == null ||
+            secondBonePoint == null
+        ) {
+            return rule.rejection(BodySectionRejectionReason.MISSING_LOCAL_EVIDENCE)
+        }
+
+        val measuredPixels = pixelDistance(
+            firstSectionPoint,
+            secondSectionPoint,
+            sourceWidth,
+            sourceHeight
+        )
+        val referencePixels = pixelDistance(
+            firstBonePoint,
+            secondBonePoint,
+            sourceWidth,
+            sourceHeight
+        )
+        if (referencePixels <= 1f) {
+            return rule.rejection(
+                reason = BodySectionRejectionReason.DEGENERATE_LOCAL_BONE,
+                measuredPixels = measuredPixels,
+                referenceBonePixels = referencePixels
+            )
+        }
+
+        val measuredRatio = measuredPixels / referencePixels
+        val sectionMidpoint = NormalizedPoint3D(
+            x = (firstSectionPoint.x + secondSectionPoint.x) / 2f,
+            y = (firstSectionPoint.y + secondSectionPoint.y) / 2f,
+            z = (firstSectionPoint.z + secondSectionPoint.z) / 2f
+        )
+        val midpointDistancePixels = pixelDistanceToSegment(
+            point = sectionMidpoint,
+            segmentStart = firstBonePoint,
+            segmentEnd = secondBonePoint,
+            sourceWidth = sourceWidth,
+            sourceHeight = sourceHeight
+        )
+        val midpointDistanceRatio = midpointDistancePixels / referencePixels
+
+        return when {
+            measuredRatio > rule.maximumMeasuredToBoneRatio -> rule.rejection(
+                reason = BodySectionRejectionReason.WIDTH_OUTLIER,
+                measuredPixels = measuredPixels,
+                referenceBonePixels = referencePixels,
+                measuredToBoneRatio = measuredRatio,
+                midpointDistancePixels = midpointDistancePixels,
+                midpointDistanceToBoneRatio = midpointDistanceRatio
+            )
+
+            midpointDistanceRatio > rule.maximumMidpointDistanceToBoneRatio -> rule.rejection(
+                reason = BodySectionRejectionReason.SECTION_NON_LOCAL,
+                measuredPixels = measuredPixels,
+                referenceBonePixels = referencePixels,
+                measuredToBoneRatio = measuredRatio,
+                midpointDistancePixels = midpointDistancePixels,
+                midpointDistanceToBoneRatio = midpointDistanceRatio
+            )
+
+            else -> null
+        }
     }
 
     private fun Rule.rejection(
