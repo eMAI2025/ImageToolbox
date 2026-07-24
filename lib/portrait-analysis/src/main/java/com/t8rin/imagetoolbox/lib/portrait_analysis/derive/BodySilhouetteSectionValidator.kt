@@ -176,8 +176,7 @@ object BodySilhouetteSectionValidator {
             val measuredRatio = measuredPixels / referencePixels
             val sectionMidpoint = NormalizedPoint3D(
                 x = (firstSectionPoint.x + secondSectionPoint.x) / 2f,
-                y = (firstSectionPoint.y + secondSectionPoint.y) / 2f,
-                z = (firstSectionPoint.z + secondSectionPoint.z) / 2f
+                y = (firstSectionPoint.y + secondSectionPoint.y) / 2f
             )
             val midpointDistancePixels = pixelDistanceToSegment(
                 point = sectionMidpoint,
