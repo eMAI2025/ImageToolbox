@@ -18,6 +18,7 @@ import com.t8rin.imagetoolbox.lib.portrait_analysis.catalog.PortraitRegionId
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodyPoseSkeletonEnricher
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodySilhouetteEnricher
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodySilhouetteSectionValidator
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodySilhouetteSkippedSection
 import com.t8rin.imagetoolbox.lib.portrait_analysis.merge.ObservationMergeResult
 import com.t8rin.imagetoolbox.lib.portrait_analysis.merge.SubjectObservationMerger
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ObservationBackend
@@ -125,7 +126,9 @@ private class MarketSilhouetteLabRunner(
                 }
                 enrichment.skippedSections.forEach { skipped ->
                     add(
-                        "skipped_section=${skipped.sectionId},reason=${skipped.reason.name}," +
+                        "skipped_section=${skipped.sectionId}," +
+                            "reason=${skipped.reportedReason()}," +
+                            "raw_reason=${skipped.reason.name}," +
                             "item=${skipped.itemId.orEmpty()}"
                     )
                 }
@@ -207,8 +210,25 @@ private fun bodyRegionCapabilities(
         SilhouetteRegionCapability(
             regionId = regionId,
             available = available,
-            reason = if (available) null else relatedSkip?.reason?.name ?: "NOT_DERIVED"
+            reason = if (available) null else relatedSkip?.reportedReason() ?: "NOT_DERIVED"
         )
+    }
+}
+
+private fun BodySilhouetteSkippedSection.reportedReason(): String {
+    val semanticPrefix = itemId.orEmpty().substringBefore("_WIDTH_RATIO_")
+    return when (semanticPrefix) {
+        "TORSO_OCCLUDED_BY_LIMB",
+        "TORSO_WIDTH_OUTLIER",
+        "SECTION_NON_LOCAL",
+        "MISSING_TORSO_EVIDENCE",
+        "DEGENERATE_TORSO_AXIS",
+        "MALFORMED_TORSO_SECTION",
+        "WIDTH_OUTLIER",
+        "MISSING_LOCAL_EVIDENCE",
+        "DEGENERATE_LOCAL_BONE",
+        "MALFORMED_SECTION" -> semanticPrefix
+        else -> reason.name
     }
 }
 
