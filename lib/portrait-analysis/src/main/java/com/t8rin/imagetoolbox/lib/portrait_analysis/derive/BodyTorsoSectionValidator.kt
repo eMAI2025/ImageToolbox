@@ -20,10 +20,9 @@ import kotlin.math.min
 /**
  * Validates mask-derived shoulder, waist and hip sections against a pose-derived torso corridor.
  *
- * A single-person segmentation mask is one connected foreground object. A crossed forearm, hand or
- * phone can therefore become part of the horizontal foreground run and falsely increase the measured
- * torso width. This validator fails closed when the section leaves the expected shoulder-to-hip
- * corridor or when an observed arm segment intersects the interior of the torso at the section level.
+ * The corridor is derived independently from the left and right shoulder-to-hip edges. This keeps
+ * the validation tied to directly observed pose evidence when the torso is rotated or the shoulder
+ * and hip landmarks are not level. Missing, reversed or degenerate side evidence fails closed.
  *
  * It does not estimate anatomy under clothing and it does not repair a rejected section.
  */
@@ -235,24 +234,31 @@ object BodyTorsoSectionValidator {
         leftHip: NormalizedPoint3D,
         rightHip: NormalizedPoint3D
     ): TorsoCorridor? {
-        val shoulderY = (leftShoulder.y + rightShoulder.y) / 2f
-        val hipY = (leftHip.y + rightHip.y) / 2f
-        val axisHeight = hipY - shoulderY
-        if (abs(axisHeight) <= 0.01f) return null
+        val leftAxisHeight = leftHip.y - leftShoulder.y
+        val rightAxisHeight = rightHip.y - rightShoulder.y
+        if (leftAxisHeight <= 0.01f || rightAxisHeight <= 0.01f) return null
 
-        val ratio = ((sectionY - shoulderY) / axisHeight).coerceIn(0f, 1f)
-        val left = lerp(leftShoulder.x, leftHip.x, ratio)
-        val right = lerp(rightShoulder.x, rightHip.x, ratio)
-        val rawLeft = min(left, right)
-        val rawRight = max(left, right)
-        val rawWidth = rawRight - rawLeft
+        val leftRatio = (sectionY - leftShoulder.y) / leftAxisHeight
+        val rightRatio = (sectionY - rightShoulder.y) / rightAxisHeight
+        if (leftRatio !in 0f..1f || rightRatio !in 0f..1f) return null
+
+        val observedLeftEdge = lerp(leftShoulder.x, leftHip.x, leftRatio)
+        val observedRightEdge = lerp(rightShoulder.x, rightHip.x, rightRatio)
+        if (observedLeftEdge >= observedRightEdge) return null
+
+        val rawWidth = observedRightEdge - observedLeftEdge
         if (rawWidth <= 0.01f) return null
 
         val margin = rawWidth * 0.12f
+        val corridorLeft = (observedLeftEdge - margin).coerceIn(0f, 1f)
+        val corridorRight = (observedRightEdge + margin).coerceIn(0f, 1f)
+        val corridorWidth = corridorRight - corridorLeft
+        if (corridorWidth <= 0.01f) return null
+
         return TorsoCorridor(
-            left = (rawLeft - margin).coerceIn(0f, 1f),
-            right = (rawRight + margin).coerceIn(0f, 1f),
-            width = rawWidth + margin * 2f
+            left = corridorLeft,
+            right = corridorRight,
+            width = corridorWidth
         )
     }
 
@@ -297,7 +303,8 @@ object BodyTorsoSectionValidator {
         val innerLeft = corridor.left + innerMargin
         val innerRight = corridor.right - innerMargin
         return segments.firstNotNullOfOrNull { segment ->
-            val crossingX = horizontalIntersectionX(segment, sectionY) ?: return@firstNotNullOfOrNull null
+            val crossingX = horizontalIntersectionX(segment, sectionY)
+                ?: return@firstNotNullOfOrNull null
             if (
                 crossingX in innerLeft..innerRight &&
                 crossingX in measuredLeft..measuredRight
