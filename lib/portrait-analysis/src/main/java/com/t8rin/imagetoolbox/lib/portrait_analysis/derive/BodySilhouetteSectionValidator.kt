@@ -174,7 +174,7 @@ object BodySilhouetteSectionValidator {
             BodySilhouetteSkippedSection(
                 sectionId = rejection.sectionId,
                 reason = BodySilhouetteSkipReason.MASK_CROSS_SECTION_NOT_FOUND,
-                itemId = "LOCAL_SECTION_RATIO_${"%.2f".format(rejection.measuredToBoneRatio)}"
+                itemId = "LOCAL_SECTION_RATIO_${rejection.measuredToBoneRatio}"
             )
         }
 
