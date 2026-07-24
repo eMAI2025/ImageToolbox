@@ -20,15 +20,17 @@ import kotlin.math.min
 /**
  * Validates mask-derived shoulder, waist and hip sections against a pose-derived torso corridor.
  *
- * The corridor is derived independently from the left and right shoulder-to-hip edges. This keeps
- * the validation tied to directly observed pose evidence when the torso is rotated or the shoulder
- * and hip landmarks are not level. Missing, reversed or degenerate side evidence fails closed.
+ * The corridor is derived independently from the left and right shoulder-to-hip edges. Limb
+ * occlusion is accepted only when a visible upper-arm or forearm segment crosses the interior of
+ * that corridor at the measured section level. Contact at the shoulder joint is ignored, and arms
+ * hanging outside the torso corridor do not block a torso section.
  *
- * It does not estimate anatomy under clothing and it does not repair a rejected section.
+ * Missing, reversed or degenerate evidence fails closed. No anatomy is inferred or repaired.
  */
 enum class BodyTorsoRejectionReason {
     TORSO_WIDTH_OUTLIER,
     TORSO_OCCLUDED_BY_LIMB,
+    SECTION_NON_LOCAL,
     MISSING_TORSO_EVIDENCE,
     DEGENERATE_TORSO_AXIS,
     MALFORMED_TORSO_SECTION
@@ -53,6 +55,11 @@ data class BodyTorsoSectionValidationResult(
 
 object BodyTorsoSectionValidator {
 
+    private enum class LimbSegmentKind {
+        UPPER_ARM,
+        FOREARM
+    }
+
     private data class Rule(
         val sectionId: String,
         val regionId: String,
@@ -69,8 +76,14 @@ object BodyTorsoSectionValidator {
 
     private data class LimbSegment(
         val id: String,
+        val kind: LimbSegmentKind,
         val start: NormalizedPoint3D,
         val end: NormalizedPoint3D
+    )
+
+    private data class HorizontalIntersection(
+        val x: Float,
+        val segmentRatio: Float
     )
 
     private val rules = listOf(
@@ -101,10 +114,7 @@ object BodyTorsoSectionValidator {
         enrichment: BodySilhouetteEnrichmentResult
     ): BodyTorsoSectionValidationResult {
         val observation = enrichment.observation
-        val rejected = rules.mapNotNull { rule ->
-            validateRule(rule, observation)
-        }
-
+        val rejected = rules.mapNotNull { rule -> validateRule(rule, observation) }
         if (rejected.isEmpty()) {
             return BodyTorsoSectionValidationResult(enrichment, emptyList())
         }
@@ -114,7 +124,6 @@ object BodyTorsoSectionValidator {
         val rejectedEndpointIds = rejectedSectionIds.flatMapTo(linkedSetOf()) { sectionId ->
             observation.contours[sectionId]?.vertexIds.orEmpty()
         }
-
         val filteredObservation = observation.copy(
             landmarks = observation.landmarks - rejectedEndpointIds,
             regions = observation.regions - rejectedRegionIds,
@@ -184,9 +193,21 @@ object BodyTorsoSectionValidator {
         val measuredLeft = min(first.x, second.x)
         val measuredRight = max(first.x, second.x)
         val measuredWidth = (measuredRight - measuredLeft).coerceAtLeast(0f)
+        val measuredCenter = (measuredLeft + measuredRight) / 2f
         val leftOverflow = (corridor.left - measuredLeft).coerceAtLeast(0f)
         val rightOverflow = (measuredRight - corridor.right).coerceAtLeast(0f)
         val measuredRatio = measuredWidth / corridor.width
+
+        if (measuredCenter !in corridor.left..corridor.right) {
+            return rule.rejection(
+                reason = BodyTorsoRejectionReason.SECTION_NON_LOCAL,
+                measuredWidth = measuredWidth,
+                expectedWidth = corridor.width,
+                measuredRatio = measuredRatio,
+                leftOverflow = leftOverflow,
+                rightOverflow = rightOverflow
+            )
+        }
 
         val limbIntersection = firstIntersectingLimb(
             observation = observation,
@@ -255,11 +276,7 @@ object BodyTorsoSectionValidator {
         val corridorWidth = corridorRight - corridorLeft
         if (corridorWidth <= 0.01f) return null
 
-        return TorsoCorridor(
-            left = corridorLeft,
-            right = corridorRight,
-            width = corridorWidth
-        )
+        return TorsoCorridor(corridorLeft, corridorRight, corridorWidth)
     }
 
     private fun firstIntersectingLimb(
@@ -274,28 +291,32 @@ object BodyTorsoSectionValidator {
             if (includeUpperArms) {
                 limbSegment(
                     observation,
-                    "left_upper_arm",
-                    PortraitLandmarkId.LEFT_SHOULDER,
-                    PortraitLandmarkId.LEFT_ELBOW
+                    id = "left_upper_arm",
+                    kind = LimbSegmentKind.UPPER_ARM,
+                    startId = PortraitLandmarkId.LEFT_SHOULDER,
+                    endId = PortraitLandmarkId.LEFT_ELBOW
                 )?.let(::add)
                 limbSegment(
                     observation,
-                    "right_upper_arm",
-                    PortraitLandmarkId.RIGHT_SHOULDER,
-                    PortraitLandmarkId.RIGHT_ELBOW
+                    id = "right_upper_arm",
+                    kind = LimbSegmentKind.UPPER_ARM,
+                    startId = PortraitLandmarkId.RIGHT_SHOULDER,
+                    endId = PortraitLandmarkId.RIGHT_ELBOW
                 )?.let(::add)
             }
             limbSegment(
                 observation,
-                "left_forearm",
-                PortraitLandmarkId.LEFT_ELBOW,
-                PortraitLandmarkId.LEFT_WRIST
+                id = "left_forearm",
+                kind = LimbSegmentKind.FOREARM,
+                startId = PortraitLandmarkId.LEFT_ELBOW,
+                endId = PortraitLandmarkId.LEFT_WRIST
             )?.let(::add)
             limbSegment(
                 observation,
-                "right_forearm",
-                PortraitLandmarkId.RIGHT_ELBOW,
-                PortraitLandmarkId.RIGHT_WRIST
+                id = "right_forearm",
+                kind = LimbSegmentKind.FOREARM,
+                startId = PortraitLandmarkId.RIGHT_ELBOW,
+                endId = PortraitLandmarkId.RIGHT_WRIST
             )?.let(::add)
         }
 
@@ -303,11 +324,21 @@ object BodyTorsoSectionValidator {
         val innerLeft = corridor.left + innerMargin
         val innerRight = corridor.right - innerMargin
         return segments.firstNotNullOfOrNull { segment ->
-            val crossingX = horizontalIntersectionX(segment, sectionY)
+            val intersection = horizontalIntersection(segment, sectionY)
                 ?: return@firstNotNullOfOrNull null
+
+            // The upper-arm segment starts at the shoulder. A crossing very close to that start is
+            // normal joint contact, not evidence that the arm occludes the torso section.
             if (
-                crossingX in innerLeft..innerRight &&
-                crossingX in measuredLeft..measuredRight
+                segment.kind == LimbSegmentKind.UPPER_ARM &&
+                intersection.segmentRatio <= 0.18f
+            ) {
+                return@firstNotNullOfOrNull null
+            }
+
+            if (
+                intersection.x in innerLeft..innerRight &&
+                intersection.x in measuredLeft..measuredRight
             ) {
                 segment.id
             } else {
@@ -319,12 +350,13 @@ object BodyTorsoSectionValidator {
     private fun limbSegment(
         observation: SubjectObservation,
         id: String,
+        kind: LimbSegmentKind,
         startId: String,
         endId: String
     ): LimbSegment? {
         val start = visiblePoint(observation, startId) ?: return null
         val end = visiblePoint(observation, endId) ?: return null
-        return LimbSegment(id, start, end)
+        return LimbSegment(id, kind, start, end)
     }
 
     private fun visiblePoint(
@@ -334,10 +366,10 @@ object BodyTorsoSectionValidator {
         ?.takeIf { it.visibility == VisibilityState.VISIBLE }
         ?.point
 
-    private fun horizontalIntersectionX(
+    private fun horizontalIntersection(
         segment: LimbSegment,
         y: Float
-    ): Float? {
+    ): HorizontalIntersection? {
         val minimumY = min(segment.start.y, segment.end.y)
         val maximumY = max(segment.start.y, segment.end.y)
         if (y < minimumY || y > maximumY) return null
@@ -346,7 +378,10 @@ object BodyTorsoSectionValidator {
         if (abs(deltaY) <= 0.0001f) return null
         val ratio = (y - segment.start.y) / deltaY
         if (ratio !in 0f..1f) return null
-        return lerp(segment.start.x, segment.end.x, ratio)
+        return HorizontalIntersection(
+            x = lerp(segment.start.x, segment.end.x, ratio),
+            segmentRatio = ratio
+        )
     }
 
     private fun Rule.rejection(
