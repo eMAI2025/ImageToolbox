@@ -130,7 +130,14 @@ class FaceVisibleGeometryFilterTest {
             contours = profileObservation().contours + (
                 "alternating_contour" to contour(
                     "alternating_contour",
-                    listOf("left_eye_a", "right_eye_a", "left_eye_b", "right_eye_b", "nose_base"),
+                    listOf(
+                        "left_eye_a",
+                        "left_eye_b",
+                        "right_eye_a",
+                        "nose_base",
+                        "mouth_left",
+                        "right_eye_b"
+                    ),
                     true
                 )
             )
@@ -144,7 +151,7 @@ class FaceVisibleGeometryFilterTest {
         val segments = result.observation.contours.values.filter {
             it.id.startsWith("alternating_contour_visible_segment_")
         }
-        assertTrue(segments.size >= 2)
+        assertEquals(2, segments.size)
         assertTrue(segments.all { !it.closed })
         assertFalse("alternating_contour" in result.observation.contours)
     }
