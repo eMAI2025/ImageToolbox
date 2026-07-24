@@ -17,6 +17,7 @@ import android.net.Uri
 import com.t8rin.imagetoolbox.lib.portrait_analysis.catalog.PortraitRegionId
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodyPoseSkeletonEnricher
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodySilhouetteEnricher
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodySilhouetteSectionValidator
 import com.t8rin.imagetoolbox.lib.portrait_analysis.merge.ObservationMergeResult
 import com.t8rin.imagetoolbox.lib.portrait_analysis.merge.SubjectObservationMerger
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ObservationBackend
@@ -71,7 +72,13 @@ private class MarketSilhouetteLabRunner(
             }
 
             val withSkeleton = BodyPoseSkeletonEnricher.enrich(merged)
-            val enrichment = BodySilhouetteEnricher.enrich(withSkeleton)
+            val rawEnrichment = BodySilhouetteEnricher.enrich(withSkeleton)
+            val sectionValidation = BodySilhouetteSectionValidator.validate(
+                enrichment = rawEnrichment,
+                sourceWidth = decoded.metadata.orientedWidth,
+                sourceHeight = decoded.metadata.orientedHeight
+            )
+            val enrichment = sectionValidation.enrichment
             val observation = enrichment.observation
             val capabilities = bodyRegionCapabilities(observation, enrichment)
             val availableCount = capabilities.count { it.available }
@@ -99,11 +106,21 @@ private class MarketSilhouetteLabRunner(
                 add("pose_landmark_count=$poseLandmarkCount")
                 add("mask_count=${observation.masks.size}")
                 add("derived_region_count=${enrichment.derivedRegionIds.size}")
+                add("local_section_rejection_count=${sectionValidation.rejectedSections.size}")
                 add("silhouette_status=${status.name}")
                 capabilities.forEach { capability ->
                     add(
                         "body_region=${capability.regionId},available=${capability.available}," +
                             "reason=${capability.reason.orEmpty()}"
+                    )
+                }
+                sectionValidation.rejectedSections.forEach { rejected ->
+                    add(
+                        "rejected_section=${rejected.sectionId}," +
+                            "measured_px=${rejected.measuredPixels}," +
+                            "bone_px=${rejected.referenceBonePixels}," +
+                            "ratio=${rejected.measuredToBoneRatio}," +
+                            "maximum_ratio=${rejected.maximumAllowedRatio}"
                     )
                 }
                 enrichment.skippedSections.forEach { skipped ->
@@ -117,7 +134,13 @@ private class MarketSilhouetteLabRunner(
                 if (status != SilhouetteVisualStatus.PASS) {
                     add(
                         "Only visible, mask-supported body regions are available. " +
-                            "Missing or cropped regions remain disabled; no anatomy is inferred."
+                            "Missing, cropped or non-local regions remain disabled; no anatomy is inferred."
+                    )
+                }
+                if (sectionValidation.rejectedSections.isNotEmpty()) {
+                    add(
+                        "${sectionValidation.rejectedSections.size} limb cross-sections were removed " +
+                            "because they spanned unrelated foreground instead of the local limb."
                     )
                 }
                 add("Visible clothing is part of the measured silhouette by design.")
