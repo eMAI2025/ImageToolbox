@@ -10,14 +10,18 @@ package com.t8rin.imagetoolbox.feature.portrait_lab
 
 import android.graphics.Bitmap
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.FaceGeometryAcceptanceGate
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.FaceGeometryAcceptanceStatus
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.FaceGeometryRejectionReason
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.FaceRegionAwarenessAnalyzer
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.FaceVisibleGeometryFilter
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.MlKitDualPassConsistencyGate
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ClassificationObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ContourObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.LandmarkObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.MeshObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.MeshTriangleObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.NormalizedPoint3D
+import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ObservationBackend
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.PoseObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.RegionObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.SubjectObservation
@@ -30,6 +34,7 @@ import kotlin.math.floor
 const val PORTRAIT_MAX_FACE_CANDIDATES = 2
 
 private val faceIndexRegex = Regex("^face_(\\d+)_")
+private val fullNormalizedRect = PortraitNormalizedRect(0f, 0f, 1f, 1f)
 
 data class PortraitNormalizedRect(
     val left: Float,
@@ -72,7 +77,7 @@ fun extractPortraitFaceCandidates(output: PortraitLabRunOutput): List<PortraitFa
         .sortedBy(PortraitFaceCandidate::faceIndex)
         .toList()
 
-fun focusPortraitOutput(
+suspend fun focusPortraitOutput(
     output: PortraitLabRunOutput,
     candidate: PortraitFaceCandidate
 ): Result<PortraitLabRunOutput> = runCatching {
@@ -90,11 +95,59 @@ fun focusPortraitOutput(
         observation = regionAnalysis.observation,
         awareness = awareness
     )
-    val acceptance = FaceGeometryAcceptanceGate.evaluate(
+
+    var roiPassFailure: String? = null
+    val roiDetectorObservation = if (
+        output.selectedBackend == ObservationBackend.ML_KIT_FACE_DETECTION
+    ) {
+        val provider = output.roiObservationProvider
+        if (provider == null) {
+            roiPassFailure = "ML Kit ROI provider unavailable"
+            null
+        } else {
+            try {
+                provider(sourceCrop)
+            } catch (error: Throwable) {
+                roiPassFailure = error.message ?: error::class.simpleName ?: "unknown ROI failure"
+                null
+            }
+        }
+    } else {
+        null
+    }
+    val roiSelectedObservation = roiDetectorObservation
+        ?.takeIf { it.faceCount == 1 }
+        ?.focusOnFace(faceIndex = 0, crop = fullNormalizedRect)
+    val roiRegionAnalysis = roiSelectedObservation
+        ?.let(FaceRegionAwarenessAnalyzer::analyzeAndEnrich)
+    val dualPassConsistency = if (
+        output.selectedBackend == ObservationBackend.ML_KIT_FACE_DETECTION
+    ) {
+        MlKitDualPassConsistencyGate.evaluate(
+            fullPassObservation = selectedObservation,
+            fullPassAwareness = awareness,
+            roiPassObservation = roiSelectedObservation,
+            roiPassAwareness = roiRegionAnalysis?.awareness
+        )
+    } else {
+        null
+    }
+
+    val gateAcceptance = FaceGeometryAcceptanceGate.evaluate(
         rawObservation = selectedObservation,
         visibleGeometry = visibleGeometry,
         awareness = awareness
     )
+    val acceptance = if (dualPassConsistency?.accepted == false) {
+        gateAcceptance.copy(
+            status = FaceGeometryAcceptanceStatus.FACE_DETECTED_GEOMETRY_REJECTED,
+            activeObservation = null,
+            reasons = gateAcceptance.reasons +
+                FaceGeometryRejectionReason.RAW_VISIBLE_GEOMETRY_CONTRADICTION
+        )
+    } else {
+        gateAcceptance
+    }
     val focusedObservation = FaceGeometryAcceptanceGate.renderObservation(acceptance)
     val transform = ImageRenderTransform.fit(
         sourceWidth = sourceCrop.width,
@@ -121,6 +174,9 @@ fun focusPortraitOutput(
         observation = focusedObservation,
         rawObservation = selectedObservation,
         faceGeometryAcceptance = acceptance,
+        roiRawObservation = roiDetectorObservation,
+        dualPassConsistency = dualPassConsistency,
+        roiObservationProvider = null,
         visualProof = visualProof,
         overlayScene = PortraitOverlaySceneBuilder.build(focusedObservation),
         faceRegionAwareness = awareness,
@@ -154,6 +210,19 @@ fun focusPortraitOutput(
             add("face_active_contour_count=${focusedObservation.contours.size}")
             add("face_raw_triangle_count=${selectedObservation.meshes.values.sumOf { it.triangles.size }}")
             add("face_active_triangle_count=${focusedObservation.meshes.values.sumOf { it.triangles.size }}")
+            dualPassConsistency?.let { dual ->
+                add("dual_pass_fingerprint=${MlKitDualPassConsistencyGate.FINGERPRINT}")
+                add("dual_pass_roi_face_count=${roiDetectorObservation?.faceCount ?: 0}")
+                add("dual_pass_accepted=${dual.accepted}")
+                add("dual_pass_reasons=${dual.reasons.joinToString(",") { it.name }}")
+                add("dual_pass_bounds_iou=${dual.metrics.boundsIou}")
+                add("dual_pass_yaw_delta_degrees=${dual.metrics.yawDeltaDegrees}")
+                add("dual_pass_roll_delta_degrees=${dual.metrics.rollDeltaDegrees}")
+                add("dual_pass_anchor_ids=${dual.metrics.comparedAnchorIds.sorted().joinToString(",")}")
+                add("dual_pass_anchor_max_ratio=${dual.metrics.maximumAnchorDistanceRatio}")
+                add("dual_pass_anchor_mean_ratio=${dual.metrics.meanAnchorDistanceRatio}")
+            }
+            roiPassFailure?.let { add("dual_pass_runtime_failure=$it") }
             awareness.regions.values.forEach { region ->
                 add(
                     "p2_region=${region.region.name}," +
@@ -184,6 +253,13 @@ fun focusPortraitOutput(
                     "Hidden-side detector proposals were removed from candidate geometry: " +
                         "landmarks=${visibleGeometry.removedLandmarkCount}, " +
                         "triangles=${visibleGeometry.removedTriangleCount}."
+                )
+            }
+            if (dualPassConsistency?.accepted == false) {
+                add(
+                    "Full-image and high-resolution ROI face observations are inconsistent. " +
+                        "No detector outputs were averaged or merged; active geometry was rejected. " +
+                        "Reasons: ${dualPassConsistency.reasons.joinToString { it.name }}"
                 )
             }
             if (acceptance.activeObservation == null) {
