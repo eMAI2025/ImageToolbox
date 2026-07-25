@@ -48,7 +48,9 @@ object BodyLandmarkVisibilityGate {
         val state: BodyLandmarkEvidenceState,
         val confidence: Float?,
         val reason: BodyVisibilityReason?,
-        val backend: ObservationBackend?
+        val backend: ObservationBackend?,
+        /** Complete backend observation retained diagnostically, never promoted by this field. */
+        val rawLandmark: LandmarkObservation?
     ) {
         val usable: Boolean get() = state == BodyLandmarkEvidenceState.VISIBLE
     }
@@ -142,7 +144,7 @@ object BodyLandmarkVisibilityGate {
         }
         val regionCapabilities = regionRules.mapValues { (regionId, requiredSegments) ->
             val blocked = requiredSegments.filterTo(linkedSetOf()) { segmentId ->
-                segmentCapabilities.getValue(segmentId).available.not()
+                !segmentCapabilities.getValue(segmentId).available
             }
             RegionCapability(
                 regionId = regionId,
@@ -158,7 +160,7 @@ object BodyLandmarkVisibilityGate {
     }
 
     /**
-     * Produces the active pose input without modifying raw evidence.
+     * Produces the active pose input without modifying raw evidence held in [Assessment].
      * Non-visible ML Kit pose landmarks and every contour depending on them are removed.
      */
     fun filterForActiveGeometry(
@@ -166,13 +168,13 @@ object BodyLandmarkVisibilityGate {
         assessment: Assessment
     ): SubjectObservation {
         val rejectedPoseIds = assessment.landmarks.values
-            .filterNot(LandmarkEvidence::usable)
+            .filter { !it.usable }
             .mapTo(linkedSetOf(), LandmarkEvidence::landmarkId)
         val filteredContours = rawObservation.contours.filterValues { contour ->
             contour.vertexIds.none { it in rejectedPoseIds }
         }
         val blockedRegionIds = assessment.regions.values
-            .filterNot(RegionCapability::available)
+            .filter { !it.available }
             .mapTo(linkedSetOf(), RegionCapability::regionId)
         return rawObservation.copy(
             landmarks = rawObservation.landmarks - rejectedPoseIds,
@@ -192,7 +194,8 @@ object BodyLandmarkVisibilityGate {
                 state = BodyLandmarkEvidenceState.MISSING,
                 confidence = null,
                 reason = BodyVisibilityReason.LANDMARK_MISSING,
-                backend = null
+                backend = null,
+                rawLandmark = null
             )
         }
         val point = landmark.point
@@ -205,7 +208,8 @@ object BodyLandmarkVisibilityGate {
                 state = BodyLandmarkEvidenceState.OFF_FRAME,
                 confidence = landmark.confidence,
                 reason = BodyVisibilityReason.LANDMARK_OFF_FRAME,
-                backend = landmark.backend
+                backend = landmark.backend,
+                rawLandmark = landmark
             )
         }
         if (landmark.visibility != VisibilityState.VISIBLE) {
@@ -214,7 +218,8 @@ object BodyLandmarkVisibilityGate {
                 state = BodyLandmarkEvidenceState.LOW_CONFIDENCE,
                 confidence = landmark.confidence,
                 reason = BodyVisibilityReason.LANDMARK_VISIBILITY_NOT_CONFIRMED,
-                backend = landmark.backend
+                backend = landmark.backend,
+                rawLandmark = landmark
             )
         }
         if (landmark.confidence == null || landmark.confidence < minimumConfidence) {
@@ -223,7 +228,8 @@ object BodyLandmarkVisibilityGate {
                 state = BodyLandmarkEvidenceState.LOW_CONFIDENCE,
                 confidence = landmark.confidence,
                 reason = BodyVisibilityReason.LANDMARK_LOW_CONFIDENCE,
-                backend = landmark.backend
+                backend = landmark.backend,
+                rawLandmark = landmark
             )
         }
         return LandmarkEvidence(
@@ -231,7 +237,8 @@ object BodyLandmarkVisibilityGate {
             state = BodyLandmarkEvidenceState.VISIBLE,
             confidence = landmark.confidence,
             reason = null,
-            backend = landmark.backend
+            backend = landmark.backend,
+            rawLandmark = landmark
         )
     }
 }
