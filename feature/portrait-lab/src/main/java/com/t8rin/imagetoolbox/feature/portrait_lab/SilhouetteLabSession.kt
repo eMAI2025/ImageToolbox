@@ -10,6 +10,7 @@ package com.t8rin.imagetoolbox.feature.portrait_lab
 
 import android.graphics.Bitmap
 import android.net.Uri
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodyLandmarkVisibilityGate
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodySilhouetteEnrichmentResult
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.SubjectObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.overlay.PortraitOverlayScene
@@ -30,7 +31,11 @@ data class SilhouetteLabRunOutput(
     val sourceBitmap: Bitmap,
     val previewBitmap: Bitmap,
     val sourceMetadata: PortraitSourceMetadata,
+    /** Unmodified merged pose + segmentation payload retained for diagnostics. */
+    val rawObservation: SubjectObservation,
+    /** Visibility-filtered and locality-validated geometry used by overlay/export. */
     val observation: SubjectObservation,
+    val bodyVisibility: BodyLandmarkVisibilityGate.Assessment,
     val enrichment: BodySilhouetteEnrichmentResult,
     val overlayScene: PortraitOverlayScene,
     val status: SilhouetteVisualStatus,
