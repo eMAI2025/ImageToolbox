@@ -9,6 +9,7 @@
 package com.t8rin.imagetoolbox.feature.portrait_lab
 
 import android.graphics.Bitmap
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.FaceGeometryAcceptanceGate
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.FaceRegionAwarenessAnalyzer
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.FaceVisibleGeometryFilter
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ClassificationObservation
@@ -25,8 +26,6 @@ import com.t8rin.imagetoolbox.lib.portrait_analysis.visual.ImageRenderTransform
 import com.t8rin.imagetoolbox.lib.portrait_analysis.visual.VisualProofEvaluator
 import kotlin.math.ceil
 import kotlin.math.floor
-import kotlin.math.max
-import kotlin.math.min
 
 const val PORTRAIT_MAX_FACE_CANDIDATES = 2
 
@@ -91,7 +90,12 @@ fun focusPortraitOutput(
         observation = regionAnalysis.observation,
         awareness = awareness
     )
-    val focusedObservation = visibleGeometry.observation
+    val acceptance = FaceGeometryAcceptanceGate.evaluate(
+        rawObservation = selectedObservation,
+        visibleGeometry = visibleGeometry,
+        awareness = awareness
+    )
+    val focusedObservation = FaceGeometryAcceptanceGate.renderObservation(acceptance)
     val transform = ImageRenderTransform.fit(
         sourceWidth = sourceCrop.width,
         sourceHeight = sourceCrop.height,
@@ -115,6 +119,8 @@ fun focusPortraitOutput(
             previewHeight = previewCrop.height
         ),
         observation = focusedObservation,
+        rawObservation = selectedObservation,
+        faceGeometryAcceptance = acceptance,
         visualProof = visualProof,
         overlayScene = PortraitOverlaySceneBuilder.build(focusedObservation),
         faceRegionAwareness = awareness,
@@ -138,6 +144,16 @@ fun focusPortraitOutput(
             add("p2_split_contours=${visibleGeometry.splitContourCount}")
             add("p2_raw_triangles=${visibleGeometry.rawTriangleCount}")
             add("p2_visible_triangles=${visibleGeometry.visibleTriangleCount}")
+            add("face_gate_fingerprint=${FaceGeometryAcceptanceGate.FINGERPRINT}")
+            add("face_detection_present=${selectedObservation.faceCount > 0}")
+            add("face_geometry_status=${acceptance.status.name}")
+            add("face_geometry_reasons=${acceptance.reasons.joinToString(",") { it.name }}")
+            add("face_raw_landmark_count=${selectedObservation.landmarks.size}")
+            add("face_active_landmark_count=${focusedObservation.landmarks.size}")
+            add("face_raw_contour_count=${selectedObservation.contours.size}")
+            add("face_active_contour_count=${focusedObservation.contours.size}")
+            add("face_raw_triangle_count=${selectedObservation.meshes.values.sumOf { it.triangles.size }}")
+            add("face_active_triangle_count=${focusedObservation.meshes.values.sumOf { it.triangles.size }}")
             awareness.regions.values.forEach { region ->
                 add(
                     "p2_region=${region.region.name}," +
@@ -160,14 +176,21 @@ fun focusPortraitOutput(
             if (!awareness.fullFaceGeometryAllowed) {
                 add(
                     "Full-face geometry is blocked for this pose. " +
-                        "Only trusted visible-side and center geometry is retained."
+                        "Only trusted visible-side and center geometry can be considered by the gate."
                 )
             }
             if (visibleGeometry.applied) {
                 add(
-                    "Hidden-side detector proposals were removed from editable geometry: " +
+                    "Hidden-side detector proposals were removed from candidate geometry: " +
                         "landmarks=${visibleGeometry.removedLandmarkCount}, " +
                         "triangles=${visibleGeometry.removedTriangleCount}."
+                )
+            }
+            if (acceptance.activeObservation == null) {
+                add(
+                    "Face detected but geometry rejected. Active overlay is empty; raw detector " +
+                        "evidence is retained separately. Reasons: " +
+                        acceptance.reasons.joinToString { it.name }
                 )
             }
         }
@@ -317,5 +340,5 @@ private fun Bitmap.cropNormalized(rect: PortraitNormalizedRect): Bitmap {
     val top = floor(rect.top * height).toInt().coerceIn(0, height - 1)
     val right = ceil(rect.right * width).toInt().coerceIn(left + 1, width)
     val bottom = ceil(rect.bottom * height).toInt().coerceIn(top + 1, height)
-    return Bitmap.createBitmap(this, left, top, max(1, right - left), max(1, bottom - top))
+    return Bitmap.createBitmap(this, left, top, right - left, bottom - top)
 }
