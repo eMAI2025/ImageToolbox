@@ -68,7 +68,7 @@ object FaceOcclusionPartialPolicy {
         evidence: OcclusionEvidence = OcclusionEvidence.unavailable()
     ): Assessment {
         val reasons = linkedSetOf<FaceGeometryRejectionReason>()
-        val ids = candidateObservation.landmarks.keys.map(String::lowercase).toSet()
+        val ids = candidateObservation.landmarks.keys.map { it.lowercase() }.toSet()
 
         val centralAnchors = ids.filterTo(linkedSetOf()) { id ->
             id.contains("nose") || id.contains("mouth") || id.contains("lip") ||
