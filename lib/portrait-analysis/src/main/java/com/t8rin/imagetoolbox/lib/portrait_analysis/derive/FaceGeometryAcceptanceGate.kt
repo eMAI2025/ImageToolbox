@@ -106,11 +106,13 @@ object FaceGeometryAcceptanceGate {
             reasons += FaceGeometryRejectionReason.BROKEN_MESH_REFERENCE
         }
 
-        val rawLandmarkIds = rawObservation.landmarks.keys
-        if (landmarkIds.any { it !in rawLandmarkIds } ||
-            visibleObservation.contours.values.any { contour ->
-                contour.vertexIds.any { it !in rawLandmarkIds }
-            }
+        // The awareness stage may append explicitly derived center/chin evidence. Therefore the
+        // filter's own raw/visible counters are the authoritative contradiction check; comparing
+        // every post-analysis ID against the detector-only payload would reject valid derived IDs.
+        if (visibleGeometry.visibleLandmarkCount > visibleGeometry.rawLandmarkCount ||
+            visibleGeometry.visibleContourCount > visibleGeometry.rawContourCount +
+                visibleGeometry.splitContourCount ||
+            visibleGeometry.visibleTriangleCount > visibleGeometry.rawTriangleCount
         ) {
             reasons += FaceGeometryRejectionReason.RAW_VISIBLE_GEOMETRY_CONTRADICTION
         }
