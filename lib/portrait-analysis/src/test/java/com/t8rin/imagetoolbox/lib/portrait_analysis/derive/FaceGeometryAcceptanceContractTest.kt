@@ -99,7 +99,9 @@ class FaceGeometryAcceptanceContractTest {
     private fun faceObservation() = SubjectObservation(
         subjectCount = 1,
         faceCount = 1,
-        bodyCount = 0
+        bodyCount = 0,
+        landmarks = emptyMap(),
+        regions = emptyMap()
     )
 
     private fun provenance() = FaceGeometryAcceptanceProvenance(
