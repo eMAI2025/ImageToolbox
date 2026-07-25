@@ -27,11 +27,13 @@ class FaceTopologyVisibilityValidatorTest {
     @Test
     fun `closed full face oval is rejected for partial pose`() {
         val candidate = observation(
-            contours = baseContours() + contour(
-                "face_oval",
-                listOf("left_eye", "nose", "right_eye", "chin"),
-                closed = true
-            )
+            contours = baseContours() + (
+                "face_oval" to contour(
+                    "face_oval",
+                    listOf("left_eye", "nose", "right_eye", "chin"),
+                    closed = true
+                )
+                )
         )
 
         val result = FaceTopologyVisibilityValidator.evaluate(
@@ -50,19 +52,23 @@ class FaceTopologyVisibilityValidatorTest {
     fun `hidden eye and brow are rejected for both visible sides`() {
         val leftVisible = observation(
             extraPoints = listOf(point("right_eyebrow_outer", 0.67f, 0.29f)),
-            contours = baseContours() + contour(
-                "right_eye_contour",
-                listOf("right_eye", "right_eyebrow_outer"),
-                closed = false
-            )
+            contours = baseContours() + (
+                "right_eye_contour" to contour(
+                    "right_eye_contour",
+                    listOf("right_eye", "right_eyebrow_outer"),
+                    closed = false
+                )
+                )
         )
         val rightVisible = observation(
             extraPoints = listOf(point("left_eyebrow_outer", 0.33f, 0.29f)),
-            contours = baseContours() + contour(
-                "left_eye_contour",
-                listOf("left_eye", "left_eyebrow_outer"),
-                closed = false
-            )
+            contours = baseContours() + (
+                "left_eye_contour" to contour(
+                    "left_eye_contour",
+                    listOf("left_eye", "left_eyebrow_outer"),
+                    closed = false
+                )
+                )
         )
 
         val leftResult = FaceTopologyVisibilityValidator.evaluate(
@@ -93,11 +99,13 @@ class FaceTopologyVisibilityValidatorTest {
                 point("bow_c", 0.70f, 0.30f),
                 point("bow_d", 0.30f, 0.70f)
             ),
-            contours = baseContours() + contour(
-                "bow_tie",
-                listOf("bow_a", "bow_b", "bow_c", "bow_d"),
-                closed = true
-            )
+            contours = baseContours() + (
+                "bow_tie" to contour(
+                    "bow_tie",
+                    listOf("bow_a", "bow_b", "bow_c", "bow_d"),
+                    closed = true
+                )
+                )
         )
 
         val result = FaceTopologyVisibilityValidator.evaluate(
@@ -118,11 +126,13 @@ class FaceTopologyVisibilityValidatorTest {
                 point("visible_a", 0.24f, 0.25f),
                 point("hidden_jump", 0.78f, 0.75f)
             ),
-            contours = baseContours() + contour(
-                "profile_jump",
-                listOf("visible_a", "hidden_jump"),
-                closed = false
-            )
+            contours = baseContours() + (
+                "profile_jump" to contour(
+                    "profile_jump",
+                    listOf("visible_a", "hidden_jump"),
+                    closed = false
+                )
+                )
         )
 
         val result = FaceTopologyVisibilityValidator.evaluate(
@@ -139,11 +149,14 @@ class FaceTopologyVisibilityValidatorTest {
 
     @Test
     fun `mesh triangle depending on rejected vertex is rejected`() {
-        val candidate = observation().copy(
+        val source = observation(
+            extraPoints = listOf(point("rejected_vertex", 0.75f, 0.75f))
+        )
+        val candidate = source.copy(
             meshes = mapOf(
                 "face_mesh" to MeshObservation(
                     id = "face_mesh",
-                    vertexIds = setOf("left_eye", "nose", "rejected_vertex"),
+                    vertexIds = setOf("left_eye", "nose"),
                     triangles = listOf(
                         MeshTriangleObservation("left_eye", "nose", "rejected_vertex")
                     ),
@@ -168,11 +181,13 @@ class FaceTopologyVisibilityValidatorTest {
     @Test
     fun `valid visible open contour passes topology validation`() {
         val candidate = observation(
-            contours = baseContours() + contour(
-                "left_visible_cheek",
-                listOf("left_eye", "nose", "chin"),
-                closed = false
-            )
+            contours = baseContours() + (
+                "left_visible_cheek" to contour(
+                    "left_visible_cheek",
+                    listOf("left_eye", "nose", "chin"),
+                    closed = false
+                )
+                )
         )
 
         val result = FaceTopologyVisibilityValidator.evaluate(
@@ -225,6 +240,7 @@ class FaceTopologyVisibilityValidatorTest {
             faceCount = 1,
             bodyCount = 0,
             landmarks = points,
+            regions = emptyMap(),
             pose = pose,
             facePoses = mapOf(0 to pose),
             contours = contours
