@@ -8,7 +8,6 @@
 
 package com.t8rin.imagetoolbox.lib.portrait_analysis.derive
 
-import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ContourObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.NormalizedPoint3D
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.SubjectObservation
 import kotlin.math.max
@@ -68,16 +67,14 @@ object FaceGeometryAcceptanceGate {
             reasons += FaceGeometryRejectionReason.VISIBLE_SIDE_CONTRADICTION
         }
 
-        if (partialPose && visibleObservation.contours.values.any(::isClosedFullFaceContour)) {
-            reasons += FaceGeometryRejectionReason.CLOSED_FULL_OVAL_IN_PARTIAL_POSE
-        }
-        if (partialPose && containsHiddenSideEyeOrBrow(
-                observation = visibleObservation,
-                activeSide = awareness.dominantImageSide
-            )
-        ) {
-            reasons += FaceGeometryRejectionReason.HIDDEN_SIDE_EYE_OR_BROW_PRESENT
-        }
+        // One dedicated topology validator owns contour/mesh visibility integrity. It never mutates
+        // raw or candidate geometry; all returned reasons feed the same fail-closed decision.
+        val topology = FaceTopologyVisibilityValidator.evaluate(
+            rawObservation = rawObservation,
+            candidateObservation = visibleObservation,
+            awareness = awareness
+        )
+        reasons += topology.reasons
 
         val activePoints = visibleObservation.landmarks.values
             .filterNot { isBoundingGeometry(it.id) }
@@ -96,21 +93,6 @@ object FaceGeometryAcceptanceGate {
 
         if (activePoints.size < 3 || activePoints.isCollapsed()) {
             reasons += FaceGeometryRejectionReason.COLLAPSED_GEOMETRY
-        }
-
-        val landmarkIds = visibleObservation.landmarks.keys
-        if (visibleObservation.contours.values.any { contour ->
-                contour.vertexIds.any { it !in landmarkIds }
-            }
-        ) {
-            reasons += FaceGeometryRejectionReason.BROKEN_LANDMARK_CONTOUR_REFERENCE
-        }
-        if (visibleObservation.meshes.values.any { mesh ->
-                mesh.vertexIds.any { it !in landmarkIds } ||
-                    mesh.triangles.any { triangle -> triangle.vertexIds.any { it !in landmarkIds } }
-            }
-        ) {
-            reasons += FaceGeometryRejectionReason.BROKEN_MESH_REFERENCE
         }
 
         // The awareness stage may append explicitly derived center/chin evidence. Therefore the
@@ -192,27 +174,6 @@ object FaceGeometryAcceptanceGate {
 
     private fun NormalizedPoint3D.isInsideNormalizedImage(): Boolean =
         x.isFinite() && y.isFinite() && x in 0f..1f && y in 0f..1f
-
-    private fun containsHiddenSideEyeOrBrow(
-        observation: SubjectObservation,
-        activeSide: FaceImageSide
-    ): Boolean {
-        val hiddenTokens = when (activeSide) {
-            FaceImageSide.LEFT -> listOf("right_eye", "right_eyebrow", "right_brow", "eye_brow_right")
-            FaceImageSide.RIGHT -> listOf("left_eye", "left_eyebrow", "left_brow", "eye_brow_left")
-            else -> return true
-        }
-        return observation.landmarks.keys.any { id -> hiddenTokens.any(id.lowercase()::contains) } ||
-            observation.contours.keys.any { id -> hiddenTokens.any(id.lowercase()::contains) }
-    }
-
-    private fun isClosedFullFaceContour(contour: ContourObservation): Boolean {
-        if (!contour.closed || isBoundingGeometry(contour.id)) return false
-        val id = contour.id.lowercase()
-        return id.contains("face_oval") ||
-            id.contains("contour_face") ||
-            (id.contains("face") && id.contains("contour"))
-    }
 
     private fun isBoundingGeometry(id: String): Boolean {
         val value = id.lowercase()
