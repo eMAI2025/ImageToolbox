@@ -31,17 +31,18 @@ data class SilhouetteLabRunOutput(
     val sourceBitmap: Bitmap,
     val previewBitmap: Bitmap,
     val sourceMetadata: PortraitSourceMetadata,
-    /** Unmodified merged pose + segmentation payload retained for diagnostics. */
-    val rawObservation: SubjectObservation,
     /** Visibility-filtered and locality-validated geometry used by overlay/export. */
     val observation: SubjectObservation,
-    val bodyVisibility: BodyLandmarkVisibilityGate.Assessment,
     val enrichment: BodySilhouetteEnrichmentResult,
     val overlayScene: PortraitOverlayScene,
     val status: SilhouetteVisualStatus,
     val regionCapabilities: List<SilhouetteRegionCapability>,
     val runtimeLog: List<String>,
-    val warnings: List<String>
+    val warnings: List<String>,
+    /** Separate diagnostic evidence; callers may supply the unmodified merged backend payload. */
+    val rawObservation: SubjectObservation = observation,
+    val bodyVisibility: BodyLandmarkVisibilityGate.Assessment =
+        BodyLandmarkVisibilityGate.evaluate(rawObservation)
 )
 
 sealed interface SilhouetteLabRunResult {
