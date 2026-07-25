@@ -10,6 +10,7 @@ package com.t8rin.imagetoolbox.feature.portrait_lab
 
 import android.graphics.Bitmap
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.FaceRegionAwarenessAnalyzer
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.FaceVisibleGeometryFilter
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ClassificationObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ContourObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.LandmarkObservation
@@ -85,8 +86,12 @@ fun focusPortraitOutput(
     val previewCrop = output.previewBitmap.cropNormalized(crop)
     val selectedObservation = output.observation.focusOnFace(candidate.faceIndex, crop)
     val regionAnalysis = FaceRegionAwarenessAnalyzer.analyzeAndEnrich(selectedObservation)
-    val focusedObservation = regionAnalysis.observation
     val awareness = regionAnalysis.awareness
+    val visibleGeometry = FaceVisibleGeometryFilter.filter(
+        observation = regionAnalysis.observation,
+        awareness = awareness
+    )
+    val focusedObservation = visibleGeometry.observation
     val transform = ImageRenderTransform.fit(
         sourceWidth = sourceCrop.width,
         sourceHeight = sourceCrop.height,
@@ -123,6 +128,16 @@ fun focusPortraitOutput(
             add("p2_pose_mode=${awareness.poseMode.name}")
             add("p2_dominant_image_side=${awareness.dominantImageSide.name}")
             add("p2_full_face_geometry_allowed=${awareness.fullFaceGeometryAllowed}")
+            add("p2_visible_filter_applied=${visibleGeometry.applied}")
+            add("p2_visible_filter_side=${visibleGeometry.activeImageSide.name}")
+            add("p2_raw_landmarks=${visibleGeometry.rawLandmarkCount}")
+            add("p2_visible_landmarks=${visibleGeometry.visibleLandmarkCount}")
+            add("p2_removed_landmarks=${visibleGeometry.removedLandmarkCount}")
+            add("p2_raw_contours=${visibleGeometry.rawContourCount}")
+            add("p2_visible_contours=${visibleGeometry.visibleContourCount}")
+            add("p2_split_contours=${visibleGeometry.splitContourCount}")
+            add("p2_raw_triangles=${visibleGeometry.rawTriangleCount}")
+            add("p2_visible_triangles=${visibleGeometry.visibleTriangleCount}")
             awareness.regions.values.forEach { region ->
                 add(
                     "p2_region=${region.region.name}," +
@@ -145,7 +160,14 @@ fun focusPortraitOutput(
             if (!awareness.fullFaceGeometryAllowed) {
                 add(
                     "Full-face geometry is blocked for this pose. " +
-                        "Available image-side, jaw and chin regions remain independently reportable."
+                        "Only trusted visible-side and center geometry is retained."
+                )
+            }
+            if (visibleGeometry.applied) {
+                add(
+                    "Hidden-side detector proposals were removed from editable geometry: " +
+                        "landmarks=${visibleGeometry.removedLandmarkCount}, " +
+                        "triangles=${visibleGeometry.removedTriangleCount}."
                 )
             }
         }
