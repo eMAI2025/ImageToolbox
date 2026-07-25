@@ -61,20 +61,9 @@ class MlKitFaceQualityGateTest {
         assertTrue(FaceGeometryRejectionReason.FACE_TOO_SMALL_OR_BOUNDS_UNAVAILABLE in result.reasons)
     }
 
-    @Test
-    fun `non finite landmark is rejected`() {
-        val source = frontalObservation().copy(
-            landmarks = frontalObservation().landmarks +
-                ("nose_base" to point("nose_base", Float.NaN, 0.50f))
-        )
-
-        val result = MlKitFaceQualityGate.evaluate(
-            rawObservation = source,
-            candidateObservation = source,
-            awareness = awareness(FacePoseMode.FRONTAL, FaceImageSide.BALANCED)
-        )
-
-        assertTrue(FaceGeometryRejectionReason.NON_FINITE_GEOMETRY in result.reasons)
+    @Test(expected = IllegalArgumentException::class)
+    fun `non finite landmark cannot enter the observation model`() {
+        point("nose_base", Float.NaN, 0.50f)
     }
 
     @Test
