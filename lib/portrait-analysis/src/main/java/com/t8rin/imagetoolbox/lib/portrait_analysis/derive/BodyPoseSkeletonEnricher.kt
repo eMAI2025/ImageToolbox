@@ -14,7 +14,7 @@ import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ContourObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ObservationBackend
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.SubjectObservation
 
-/** Adds observation-only skeleton lines between existing pose landmarks. */
+/** Adds observation-only skeleton lines only after fail-closed landmark visibility validation. */
 object BodyPoseSkeletonEnricher {
 
     private val connections = listOf(
@@ -33,12 +33,19 @@ object BodyPoseSkeletonEnricher {
     )
 
     fun enrich(observation: SubjectObservation): SubjectObservation {
+        val visibility = BodyLandmarkVisibilityGate.evaluate(observation)
+        val activeObservation = BodyLandmarkVisibilityGate.filterForActiveGeometry(
+            rawObservation = observation,
+            assessment = visibility
+        )
         val additions = linkedMapOf<String, ContourObservation>()
         connections.forEach { (name, endpoints) ->
-            val first = observation.landmarks[endpoints.first] ?: return@forEach
-            val second = observation.landmarks[endpoints.second] ?: return@forEach
+            val capability = visibility.segments[name] ?: return@forEach
+            if (!capability.available) return@forEach
+            val first = activeObservation.landmarks[endpoints.first] ?: return@forEach
+            val second = activeObservation.landmarks[endpoints.second] ?: return@forEach
             val id = "derived_body_skeleton_$name"
-            if (id in observation.contours) return@forEach
+            if (id in activeObservation.contours) return@forEach
             val confidence = listOfNotNull(first.confidence, second.confidence).minOrNull()
             additions[id] = ContourObservation(
                 id = id,
@@ -53,6 +60,6 @@ object BodyPoseSkeletonEnricher {
                 backend = ObservationBackend.ML_KIT_POSE
             )
         }
-        return observation.copy(contours = observation.contours + additions)
+        return activeObservation.copy(contours = activeObservation.contours + additions)
     }
 }
