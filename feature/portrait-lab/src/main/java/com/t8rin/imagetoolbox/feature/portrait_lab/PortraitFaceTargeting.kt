@@ -12,6 +12,7 @@ import android.graphics.Bitmap
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.FaceGeometryAcceptanceGate
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.FaceGeometryAcceptanceStatus
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.FaceGeometryRejectionReason
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.FaceInputQualityPolicy
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.FaceRegionAwarenessAnalyzer
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.FaceVisibleGeometryFilter
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.MlKitDualPassConsistencyGate
@@ -28,6 +29,7 @@ import com.t8rin.imagetoolbox.lib.portrait_analysis.model.SubjectObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.overlay.PortraitOverlaySceneBuilder
 import com.t8rin.imagetoolbox.lib.portrait_analysis.visual.ImageRenderTransform
 import com.t8rin.imagetoolbox.lib.portrait_analysis.visual.VisualProofEvaluator
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
 
@@ -96,6 +98,23 @@ suspend fun focusPortraitOutput(
         awareness = awareness
     )
 
+    val inputQualityEvidence = FaceInputQualityPolicy.Evidence(
+        sourceWidth = sourceCrop.width,
+        sourceHeight = sourceCrop.height,
+        encodedWidth = output.sourceMetadata.encodedWidth,
+        encodedHeight = output.sourceMetadata.encodedHeight,
+        orientedWidth = output.sourceMetadata.orientedWidth,
+        orientedHeight = output.sourceMetadata.orientedHeight,
+        exifOrientation = output.sourceMetadata.exifOrientation,
+        orientationDegrees = output.sourceMetadata.orientationDegrees,
+        mirrored = output.sourceMetadata.mirrored,
+        normalizedEdgeEnergy = sourceCrop.normalizedEdgeEnergy()
+    )
+    val inputQuality = FaceInputQualityPolicy.evaluate(
+        observation = visibleGeometry.observation,
+        evidence = inputQualityEvidence
+    )
+
     var roiPassFailure: String? = null
     val roiDetectorObservation = if (
         output.selectedBackend == ObservationBackend.ML_KIT_FACE_DETECTION
@@ -136,7 +155,8 @@ suspend fun focusPortraitOutput(
     val gateAcceptance = FaceGeometryAcceptanceGate.evaluate(
         rawObservation = selectedObservation,
         visibleGeometry = visibleGeometry,
-        awareness = awareness
+        awareness = awareness,
+        inputQualityEvidence = inputQualityEvidence
     )
     val acceptance = if (dualPassConsistency?.accepted == false) {
         gateAcceptance.copy(
@@ -160,14 +180,7 @@ suspend fun focusPortraitOutput(
     output.copy(
         sourceBitmap = sourceCrop,
         previewBitmap = previewCrop,
-        sourceMetadata = PortraitSourceMetadata(
-            encodedWidth = sourceCrop.width,
-            encodedHeight = sourceCrop.height,
-            orientedWidth = sourceCrop.width,
-            orientedHeight = sourceCrop.height,
-            exifOrientation = 1,
-            orientationDegrees = 0,
-            mirrored = false,
+        sourceMetadata = output.sourceMetadata.copy(
             previewWidth = previewCrop.width,
             previewHeight = previewCrop.height
         ),
@@ -201,6 +214,17 @@ suspend fun focusPortraitOutput(
             add("p2_raw_triangles=${visibleGeometry.rawTriangleCount}")
             add("p2_visible_triangles=${visibleGeometry.visibleTriangleCount}")
             add("face_gate_fingerprint=${FaceGeometryAcceptanceGate.FINGERPRINT}")
+            add("face_input_quality_fingerprint=${FaceInputQualityPolicy.FINGERPRINT}")
+            add("face_input_quality_accepted=${inputQuality.accepted}")
+            add("face_input_quality_reasons=${inputQuality.reasons.joinToString(",") { it.name }}")
+            add("face_width_pixels=${inputQuality.metrics.faceWidthPixels}")
+            add("face_height_pixels=${inputQuality.metrics.faceHeightPixels}")
+            add("face_edge_energy=${inputQuality.metrics.normalizedEdgeEnergy}")
+            add("face_out_of_frame_ratio=${inputQuality.metrics.outOfFramePointRatio}")
+            add("face_transform_consistent=${inputQuality.metrics.transformConsistent}")
+            add("source_exif_orientation=${output.sourceMetadata.exifOrientation}")
+            add("source_orientation_degrees=${output.sourceMetadata.orientationDegrees}")
+            add("source_mirrored=${output.sourceMetadata.mirrored}")
             add("face_detection_present=${selectedObservation.faceCount > 0}")
             add("face_geometry_status=${acceptance.status.name}")
             add("face_geometry_reasons=${acceptance.reasons.joinToString(",") { it.name }}")
@@ -253,6 +277,13 @@ suspend fun focusPortraitOutput(
                     "Hidden-side detector proposals were removed from candidate geometry: " +
                         "landmarks=${visibleGeometry.removedLandmarkCount}, " +
                         "triangles=${visibleGeometry.removedTriangleCount}."
+                )
+            }
+            if (!inputQuality.accepted) {
+                add(
+                    "Input image quality is insufficient or transform provenance is inconsistent. " +
+                        "Choose a sharper image with a larger face. Reasons: " +
+                        inputQuality.reasons.joinToString { it.name }
                 )
             }
             if (dualPassConsistency?.accepted == false) {
@@ -417,4 +448,36 @@ private fun Bitmap.cropNormalized(rect: PortraitNormalizedRect): Bitmap {
     val right = ceil(rect.right * width).toInt().coerceIn(left + 1, width)
     val bottom = ceil(rect.bottom * height).toInt().coerceIn(top + 1, height)
     return Bitmap.createBitmap(this, left, top, right - left, bottom - top)
+}
+
+/**
+ * Normalized local edge energy sampled on a bounded grid. The score is used only as a rejection
+ * signal; it does not sharpen or modify the source image.
+ */
+private fun Bitmap.normalizedEdgeEnergy(): Float? {
+    if (width < 3 || height < 3) return null
+    val stride = maxOf(1, minOf(width, height) / 256)
+    var sum = 0.0
+    var count = 0L
+    var y = stride
+    while (y < height - stride) {
+        var x = stride
+        while (x < width - stride) {
+            val center = getPixel(x, y).luma()
+            val right = getPixel(x + stride, y).luma()
+            val bottom = getPixel(x, y + stride).luma()
+            sum += abs(center - right) + abs(center - bottom)
+            count += 2
+            x += stride
+        }
+        y += stride
+    }
+    return if (count > 0) (sum / count / 255.0).toFloat() else null
+}
+
+private fun Int.luma(): Int {
+    val red = this shr 16 and 0xff
+    val green = this shr 8 and 0xff
+    val blue = this and 0xff
+    return (red * 299 + green * 587 + blue * 114) / 1000
 }
