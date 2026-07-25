@@ -12,12 +12,6 @@ import com.t8rin.imagetoolbox.lib.portrait_analysis.model.NormalizedPoint3D
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.SubjectObservation
 import kotlin.math.max
 
-/**
- * Final fail-closed decision between detector/visible-filter output and active overlay geometry.
- *
- * Detection is never treated as permission to render. The detector proposal is retained as raw
- * evidence, while the active geometry is present only when all structural checks pass.
- */
 object FaceGeometryAcceptanceGate {
 
     const val FINGERPRINT = "POSTAC_MASTER_FACE_GATE_V1_RUNTIME"
@@ -28,7 +22,9 @@ object FaceGeometryAcceptanceGate {
     fun evaluate(
         rawObservation: SubjectObservation,
         visibleGeometry: FaceVisibleGeometryResult,
-        awareness: FaceRegionAwareness
+        awareness: FaceRegionAwareness,
+        occlusionEvidence: FaceOcclusionPartialPolicy.OcclusionEvidence =
+            FaceOcclusionPartialPolicy.OcclusionEvidence.unavailable()
     ): FaceGeometryAcceptanceDecision {
         if (rawObservation.faceCount <= 0) {
             return FaceGeometryAcceptanceDecision(
@@ -44,8 +40,6 @@ object FaceGeometryAcceptanceGate {
         val partialPose = awareness.poseMode == FacePoseMode.HALF_PROFILE ||
             awareness.poseMode == FacePoseMode.PROFILE
 
-        // Backend-specific evidence is evaluated before generic topology checks. These policies
-        // return reasons only; they never modify, mirror or synthesize detector geometry.
         val mlKitQuality = MlKitFaceQualityGate.evaluate(
             rawObservation = rawObservation,
             candidateObservation = visibleObservation,
@@ -67,8 +61,12 @@ object FaceGeometryAcceptanceGate {
             reasons += FaceGeometryRejectionReason.VISIBLE_SIDE_CONTRADICTION
         }
 
-        // One dedicated topology validator owns contour/mesh visibility integrity. It never mutates
-        // raw or candidate geometry; all returned reasons feed the same fail-closed decision.
+        reasons += FaceOcclusionPartialPolicy.evaluate(
+            candidateObservation = visibleObservation,
+            awareness = awareness,
+            evidence = occlusionEvidence
+        ).reasons
+
         val topology = FaceTopologyVisibilityValidator.evaluate(
             rawObservation = rawObservation,
             candidateObservation = visibleObservation,
@@ -95,9 +93,6 @@ object FaceGeometryAcceptanceGate {
             reasons += FaceGeometryRejectionReason.COLLAPSED_GEOMETRY
         }
 
-        // The awareness stage may append explicitly derived center/chin evidence. Therefore the
-        // filter's own raw/visible counters are the authoritative contradiction check; comparing
-        // every post-analysis ID against the detector-only payload would reject valid derived IDs.
         if (visibleGeometry.visibleLandmarkCount > visibleGeometry.rawLandmarkCount ||
             visibleGeometry.visibleContourCount > visibleGeometry.rawContourCount +
                 visibleGeometry.splitContourCount ||
@@ -123,10 +118,6 @@ object FaceGeometryAcceptanceGate {
         }
     }
 
-    /**
-     * Observation used by the active overlay on rejection. It deliberately carries no geometry.
-     * Raw detector evidence remains available on [FaceGeometryAcceptanceDecision.rawObservation].
-     */
     fun renderObservation(decision: FaceGeometryAcceptanceDecision): SubjectObservation =
         decision.activeObservation ?: decision.rawObservation.copy(
             landmarks = emptyMap(),
