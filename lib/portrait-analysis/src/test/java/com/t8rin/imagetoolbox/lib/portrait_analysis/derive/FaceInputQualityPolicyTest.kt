@@ -96,16 +96,9 @@ class FaceInputQualityPolicyTest {
         assertTrue(FaceGeometryRejectionReason.MIRROR_TRANSFORM_INCONSISTENT in result.reasons)
     }
 
-    @Test
-    fun `out of frame ratio above ceiling is rejected`() {
-        val source = observation().copy(
-            landmarks = observation().landmarks + mapOf(
-                "point_out_1" to point("point_out_1", 1.10f, 0.50f),
-                "point_out_2" to point("point_out_2", -0.10f, 0.50f)
-            )
-        )
-        val result = FaceInputQualityPolicy.evaluate(source, evidence())
-        assertTrue(FaceGeometryRejectionReason.GEOMETRY_OUT_OF_FRAME_RATIO_EXCEEDED in result.reasons)
+    @Test(expected = IllegalArgumentException::class)
+    fun `observation model rejects an out of frame point before acceptance`() {
+        point("point_out", 1.10f, 0.50f)
     }
 
     private fun evidence(
