@@ -47,7 +47,9 @@ object MlKitFaceProfilePolicy {
             return Assessment(
                 reasons = emptySet(),
                 yawDegrees = awareness.yawDegrees,
-                absoluteYawDegrees = awareness.yawDegrees?.takeIf(Float::isFinite)?.let(::abs),
+                absoluteYawDegrees = awareness.yawDegrees
+                    ?.takeIf { it.isFinite() }
+                    ?.let(::abs),
                 poseMode = awareness.poseMode,
                 dominantImageSide = awareness.dominantImageSide
             )
@@ -55,13 +57,13 @@ object MlKitFaceProfilePolicy {
 
         val reasons = linkedSetOf<FaceGeometryRejectionReason>()
         val yaw = awareness.yawDegrees
-        val absoluteYaw = yaw?.takeIf(Float::isFinite)?.let(::abs)
+        val absoluteYaw = yaw?.takeIf { it.isFinite() }?.let(::abs)
         val pitchSupported = awareness.pitchDegrees
-            ?.takeIf(Float::isFinite)
+            ?.takeIf { it.isFinite() }
             ?.let { abs(it) <= MAX_SUPPORTED_ABS_PITCH_DEGREES }
             ?: false
         val rollSupported = awareness.rollDegrees
-            ?.takeIf(Float::isFinite)
+            ?.takeIf { it.isFinite() }
             ?.let { abs(it) <= MAX_SUPPORTED_ABS_ROLL_DEGREES }
             ?: false
 
