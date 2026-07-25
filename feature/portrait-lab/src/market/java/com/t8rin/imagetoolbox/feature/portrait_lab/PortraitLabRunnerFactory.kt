@@ -133,7 +133,14 @@ private class MarketPortraitLabRunner(
                 visualProof = visualProof,
                 overlayScene = PortraitOverlaySceneBuilder.build(observation),
                 runtimeLog = runtimeLog,
-                warnings = emptyList()
+                warnings = emptyList(),
+                roiObservationProvider = if (
+                    backend == ObservationBackend.ML_KIT_FACE_DETECTION
+                ) {
+                    { roiBitmap -> observeMlKitFace(roiBitmap) }
+                } else {
+                    null
+                }
             )
         )
     }
