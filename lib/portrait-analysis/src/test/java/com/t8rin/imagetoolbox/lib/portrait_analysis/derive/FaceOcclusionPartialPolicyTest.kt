@@ -146,6 +146,7 @@ class FaceOcclusionPartialPolicyTest {
             faceCount = 1,
             bodyCount = 0,
             landmarks = landmarks,
+            regions = emptyMap(),
             contours = mapOf(
                 "bounding_box" to ContourObservation(
                     id = "bounding_box",
