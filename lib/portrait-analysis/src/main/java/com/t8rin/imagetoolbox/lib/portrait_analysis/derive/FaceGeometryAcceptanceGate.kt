@@ -45,14 +45,18 @@ object FaceGeometryAcceptanceGate {
         val partialPose = awareness.poseMode == FacePoseMode.HALF_PROFILE ||
             awareness.poseMode == FacePoseMode.PROFILE
 
-        // Backend-specific evidence is evaluated before generic topology checks. The quality gate
-        // returns reasons only; it never modifies, mirrors or synthesizes detector geometry.
+        // Backend-specific evidence is evaluated before generic topology checks. These policies
+        // return reasons only; they never modify, mirror or synthesize detector geometry.
         val mlKitQuality = MlKitFaceQualityGate.evaluate(
             rawObservation = rawObservation,
             candidateObservation = visibleObservation,
             awareness = awareness
         )
         reasons += mlKitQuality.reasons
+        reasons += MlKitFaceProfilePolicy.evaluate(
+            rawObservation = rawObservation,
+            awareness = awareness
+        ).reasons
 
         if (awareness.poseMode == FacePoseMode.UNKNOWN) {
             reasons += FaceGeometryRejectionReason.MISSING_REQUIRED_POSE_OR_AXIS
@@ -62,12 +66,6 @@ object FaceGeometryAcceptanceGate {
         }
         if (partialPose && !visibleGeometry.applied) {
             reasons += FaceGeometryRejectionReason.VISIBLE_SIDE_CONTRADICTION
-        }
-
-        // ML Kit Face Detection does not provide directly observed dense geometry for strong profile.
-        // Until a later backend supplies sufficient evidence, strong profile must fail closed.
-        if (awareness.poseMode == FacePoseMode.PROFILE) {
-            reasons += FaceGeometryRejectionReason.UNSUPPORTED_PARTIAL_OR_STRONG_PROFILE
         }
 
         if (partialPose && visibleObservation.contours.values.any(::isClosedFullFaceContour)) {
