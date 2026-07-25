@@ -103,7 +103,8 @@ class MlKitFaceProfilePolicyTest {
             subjectCount = 1,
             faceCount = 1,
             bodyCount = 0,
-            landmarks = mapOf(point.id to point)
+            landmarks = mapOf(point.id to point),
+            regions = emptyMap()
         )
     }
 }
