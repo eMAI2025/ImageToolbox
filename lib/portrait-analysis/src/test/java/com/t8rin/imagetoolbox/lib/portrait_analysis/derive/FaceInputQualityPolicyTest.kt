@@ -58,8 +58,8 @@ class FaceInputQualityPolicyTest {
     }
 
     @Test
-    fun `rotated EXIF requires swapped oriented dimensions`() {
-        val invalid = FaceInputQualityPolicy.evaluate(
+    fun `rotated EXIF requires swapped oriented dimensions and exact rotation`() {
+        val invalidDimensions = FaceInputQualityPolicy.evaluate(
             observation(),
             evidence(
                 encodedWidth = 1200,
@@ -68,6 +68,19 @@ class FaceInputQualityPolicyTest {
                 orientedHeight = 800,
                 exifOrientation = 6,
                 orientationDegrees = 90
+            )
+        )
+        val invalidRotation = FaceInputQualityPolicy.evaluate(
+            observation(),
+            evidence(
+                encodedWidth = 1200,
+                encodedHeight = 800,
+                orientedWidth = 800,
+                orientedHeight = 1200,
+                sourceWidth = 800,
+                sourceHeight = 1200,
+                exifOrientation = 6,
+                orientationDegrees = 270
             )
         )
         val valid = FaceInputQualityPolicy.evaluate(
@@ -83,7 +96,8 @@ class FaceInputQualityPolicyTest {
                 orientationDegrees = 90
             )
         )
-        assertTrue(FaceGeometryRejectionReason.EXIF_TRANSFORM_INCONSISTENT in invalid.reasons)
+        assertTrue(FaceGeometryRejectionReason.EXIF_TRANSFORM_INCONSISTENT in invalidDimensions.reasons)
+        assertTrue(FaceGeometryRejectionReason.EXIF_TRANSFORM_INCONSISTENT in invalidRotation.reasons)
         assertFalse(FaceGeometryRejectionReason.EXIF_TRANSFORM_INCONSISTENT in valid.reasons)
     }
 
@@ -96,9 +110,27 @@ class FaceInputQualityPolicyTest {
         assertTrue(FaceGeometryRejectionReason.MIRROR_TRANSFORM_INCONSISTENT in result.reasons)
     }
 
-    @Test(expected = IllegalArgumentException::class)
-    fun `observation model rejects an out of frame point before acceptance`() {
-        point("point_out", 1.10f, 0.50f)
+    @Test
+    fun `coordinate or visibility outside frame exceeds fail closed ratio`() {
+        val source = observation()
+        val outOfFrame = source.copy(
+            landmarks = source.landmarks + mapOf(
+                "point_out_coordinate" to point("point_out_coordinate", 1.10f, 0.50f),
+                "point_out_visibility" to point(
+                    "point_out_visibility",
+                    0.55f,
+                    0.55f,
+                    VisibilityState.OUTSIDE_FRAME
+                )
+            )
+        )
+        val result = FaceInputQualityPolicy.evaluate(outOfFrame, evidence())
+
+        assertFalse(result.accepted)
+        assertTrue(
+            FaceGeometryRejectionReason.GEOMETRY_OUT_OF_FRAME_RATIO_EXCEEDED in result.reasons
+        )
+        assertTrue(FaceGeometryRejectionReason.IMAGE_QUALITY_RESELECT_REQUIRED in result.reasons)
     }
 
     private fun evidence(
@@ -150,6 +182,7 @@ class FaceInputQualityPolicyTest {
             faceCount = 1,
             bodyCount = 0,
             landmarks = landmarks,
+            regions = emptyMap(),
             contours = mapOf(
                 "bounding_box" to ContourObservation(
                     id = "bounding_box",
@@ -163,12 +196,17 @@ class FaceInputQualityPolicyTest {
         )
     }
 
-    private fun point(id: String, x: Float, y: Float) = LandmarkObservation(
+    private fun point(
+        id: String,
+        x: Float,
+        y: Float,
+        visibility: VisibilityState = VisibilityState.VISIBLE
+    ) = LandmarkObservation(
         id = id,
         point = NormalizedPoint3D(x, y),
         confidence = null,
         confidenceSource = ConfidenceSource.UNAVAILABLE,
-        visibility = VisibilityState.VISIBLE,
+        visibility = visibility,
         backend = ObservationBackend.ML_KIT_FACE_DETECTION
     )
 }
