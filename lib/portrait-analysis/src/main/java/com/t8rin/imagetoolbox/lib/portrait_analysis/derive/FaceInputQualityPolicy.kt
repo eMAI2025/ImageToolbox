@@ -9,6 +9,7 @@
 package com.t8rin.imagetoolbox.lib.portrait_analysis.derive
 
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.SubjectObservation
+import com.t8rin.imagetoolbox.lib.portrait_analysis.model.VisibilityState
 
 /**
  * Input-image quality gate used before active face geometry is exposed.
@@ -84,8 +85,9 @@ object FaceInputQualityPolicy {
             reasons += FaceGeometryRejectionReason.IMAGE_QUALITY_RESELECT_REQUIRED
         }
 
-        val exifValid = evidence.exifOrientation in 1..8 &&
-            evidence.orientationDegrees in setOf(0, 90, 180, 270)
+        val expectedOrientationDegrees = evidence.exifOrientation.expectedOrientationDegrees()
+        val exifValid = expectedOrientationDegrees != null &&
+            evidence.orientationDegrees == expectedOrientationDegrees
         val swapsDimensions = evidence.exifOrientation in setOf(5, 6, 7, 8)
         val expectedOrientedWidth = if (swapsDimensions) evidence.encodedHeight else evidence.encodedWidth
         val expectedOrientedHeight = if (swapsDimensions) evidence.encodedWidth else evidence.encodedHeight
@@ -101,14 +103,15 @@ object FaceInputQualityPolicy {
             reasons += FaceGeometryRejectionReason.MIRROR_TRANSFORM_INCONSISTENT
         }
 
-        val activePoints = observation.landmarks.values
+        val activeLandmarks = observation.landmarks.values
             .filterNot { landmark -> landmark.id.isBoundingGeometry() }
-            .map { it.point }
-        val outOfFrameCount = activePoints.count { point ->
-            !point.x.isFinite() || !point.y.isFinite() || point.x !in 0f..1f || point.y !in 0f..1f
+        val outOfFrameCount = activeLandmarks.count { landmark ->
+            landmark.visibility == VisibilityState.OUTSIDE_FRAME ||
+                landmark.point.x !in 0f..1f ||
+                landmark.point.y !in 0f..1f
         }
-        val outOfFrameRatio = if (activePoints.isEmpty()) 1f else {
-            outOfFrameCount.toFloat() / activePoints.size.toFloat()
+        val outOfFrameRatio = if (activeLandmarks.isEmpty()) 1f else {
+            outOfFrameCount.toFloat() / activeLandmarks.size.toFloat()
         }
         if (outOfFrameRatio > MAXIMUM_OUT_OF_FRAME_POINT_RATIO) {
             reasons += FaceGeometryRejectionReason.GEOMETRY_OUT_OF_FRAME_RATIO_EXCEEDED
@@ -141,13 +144,21 @@ object FaceInputQualityPolicy {
     private fun SubjectObservation.faceBounds(): Bounds? {
         val contour = contours.values.firstOrNull { it.id.isBoundingGeometry() } ?: return null
         val points = contour.vertexIds.mapNotNull(landmarks::get).map { it.point }
-        if (points.isEmpty() || points.any { !it.x.isFinite() || !it.y.isFinite() }) return null
+        if (points.isEmpty()) return null
         return Bounds(
             left = points.minOf { it.x },
             top = points.minOf { it.y },
             right = points.maxOf { it.x },
             bottom = points.maxOf { it.y }
         ).takeIf { it.width > 0f && it.height > 0f }
+    }
+
+    private fun Int.expectedOrientationDegrees(): Int? = when (this) {
+        1, 2, 4 -> 0
+        3 -> 180
+        5, 6 -> 90
+        7, 8 -> 270
+        else -> null
     }
 
     private fun String.isBoundingGeometry(): Boolean {
