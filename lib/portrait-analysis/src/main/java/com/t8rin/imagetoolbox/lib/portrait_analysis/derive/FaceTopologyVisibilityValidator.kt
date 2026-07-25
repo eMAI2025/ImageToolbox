@@ -47,7 +47,8 @@ object FaceTopologyVisibilityValidator {
     fun evaluate(
         rawObservation: SubjectObservation,
         candidateObservation: SubjectObservation,
-        awareness: FaceRegionAwareness
+        awareness: FaceRegionAwareness,
+        rejectedVertexIds: Set<String> = emptySet()
     ): Assessment {
         val reasons = linkedSetOf<FaceGeometryRejectionReason>()
         val landmarkIds = candidateObservation.landmarks.keys
@@ -74,9 +75,11 @@ object FaceTopologyVisibilityValidator {
         candidateObservation.contours.values
             .filterNot { isBoundingGeometry(it.id) }
             .forEach { contour ->
-                val missing = contour.vertexIds.count { it !in landmarkIds }
-                if (missing > 0) {
-                    brokenContourReferences += missing
+                val rejectedReferences = contour.vertexIds.count {
+                    it !in landmarkIds || it in rejectedVertexIds
+                }
+                if (rejectedReferences > 0) {
+                    brokenContourReferences += rejectedReferences
                     reasons += FaceGeometryRejectionReason.BROKEN_LANDMARK_CONTOUR_REFERENCE
                     return@forEach
                 }
@@ -107,11 +110,15 @@ object FaceTopologyVisibilityValidator {
             }
 
         candidateObservation.meshes.values.forEach { mesh ->
-            val rejectedVertexIds = mesh.vertexIds.filter { it !in landmarkIds }
-            val rejectedTriangles = mesh.triangles.count { triangle ->
-                triangle.vertexIds.any { it !in landmarkIds || it !in mesh.vertexIds }
+            val rejectedMeshVertices = mesh.vertexIds.filter {
+                it !in landmarkIds || it in rejectedVertexIds
             }
-            val brokenCount = rejectedVertexIds.size + rejectedTriangles
+            val rejectedTriangles = mesh.triangles.count { triangle ->
+                triangle.vertexIds.any {
+                    it !in landmarkIds || it !in mesh.vertexIds || it in rejectedVertexIds
+                }
+            }
+            val brokenCount = rejectedMeshVertices.size + rejectedTriangles
             if (brokenCount > 0) {
                 brokenMeshReferences += brokenCount
                 reasons += FaceGeometryRejectionReason.BROKEN_MESH_REFERENCE
