@@ -46,6 +46,10 @@ enum class FaceGeometryRejectionReason {
     COLLAPSED_GEOMETRY,
     BROKEN_LANDMARK_CONTOUR_REFERENCE,
     BROKEN_MESH_REFERENCE,
+    CONTOUR_SELF_INTERSECTION,
+    CONTOUR_CROSSES_UNSUPPORTED_SPACE,
+    MESH_TRIANGLE_REFERENCES_REJECTED_VERTEX,
+    DUAL_PASS_ROI_INCONSISTENT,
     RAW_VISIBLE_GEOMETRY_CONTRADICTION
 }
 
@@ -232,6 +236,10 @@ private fun FaceGeometryRejectionReason.defaultSeverity(): FaceGeometryReasonSev
     FaceGeometryRejectionReason.COLLAPSED_GEOMETRY,
     FaceGeometryRejectionReason.BROKEN_LANDMARK_CONTOUR_REFERENCE,
     FaceGeometryRejectionReason.BROKEN_MESH_REFERENCE,
+    FaceGeometryRejectionReason.CONTOUR_SELF_INTERSECTION,
+    FaceGeometryRejectionReason.CONTOUR_CROSSES_UNSUPPORTED_SPACE,
+    FaceGeometryRejectionReason.MESH_TRIANGLE_REFERENCES_REJECTED_VERTEX,
+    FaceGeometryRejectionReason.DUAL_PASS_ROI_INCONSISTENT,
     FaceGeometryRejectionReason.RAW_VISIBLE_GEOMETRY_CONTRADICTION ->
         FaceGeometryReasonSeverity.ERROR
 }
