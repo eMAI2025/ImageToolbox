@@ -19,6 +19,7 @@ import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodyPoseSkeletonEnric
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodySilhouetteEnricher
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodySilhouetteSectionValidator
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodySilhouetteSkippedSection
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodyTorsoSectionValidator
 import com.t8rin.imagetoolbox.lib.portrait_analysis.merge.ObservationMergeResult
 import com.t8rin.imagetoolbox.lib.portrait_analysis.merge.SubjectObservationMerger
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ObservationBackend
@@ -31,6 +32,25 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 private const val SILHOUETTE_MAX_PREVIEW_DIMENSION = 1600
+private const val POSTAC_MASTER_BUILD_BRANCH = "fix/postac-master-b1-torso-occlusion-validation"
+private const val POSTAC_MASTER_BUILD_SOURCE_COMMIT = "bbe46e109b5631fb49f2d653b52d7a604622246c"
+private const val POSTAC_MASTER_BUILD_FINGERPRINT_VERSION = "POSTAC_MASTER_DIAGNOSTICS_V1"
+private val POSTAC_MASTER_ACTIVE_FIXES = listOf(
+    "B1_LOCAL_LIMB_SECTION_VALIDATION",
+    "B1_TORSO_CORRIDOR_VALIDATION",
+    "B1_TORSO_LIMB_OCCLUSION_VALIDATION",
+    "B1_SEMANTIC_REJECTION_REASONS"
+)
+
+private val TORSO_SECTION_IDS = setOf(
+    "derived_body_shoulder_section",
+    "derived_body_waist_section",
+    "derived_body_hip_section"
+)
+
+private fun isLimbSection(id: String): Boolean =
+    id.contains("upper_arm") || id.contains("forearm") ||
+        id.contains("thigh") || id.contains("calf")
 
 fun createSilhouetteLabRunner(context: Context): SilhouetteLabRunner =
     MarketSilhouetteLabRunner(context.applicationContext)
@@ -79,13 +99,18 @@ private class MarketSilhouetteLabRunner(
                 sourceWidth = decoded.metadata.orientedWidth,
                 sourceHeight = decoded.metadata.orientedHeight
             )
-            val enrichment = sectionValidation.enrichment
+            val torsoValidation = BodyTorsoSectionValidator.validate(sectionValidation.enrichment)
+            val enrichment = torsoValidation.enrichment
             val observation = enrichment.observation
             val capabilities = bodyRegionCapabilities(observation, enrichment)
             val availableCount = capabilities.count { it.available }
             val poseLandmarkCount = observation.landmarks.values.count {
                 it.backend == ObservationBackend.ML_KIT_POSE
             }
+            val rawLimbCount = rawEnrichment.observation.contours.keys.count(::isLimbSection)
+            val filteredLimbCount = observation.contours.keys.count(::isLimbSection)
+            val rawTorsoCount = rawEnrichment.observation.contours.keys.count { it in TORSO_SECTION_IDS }
+            val filteredTorsoCount = observation.contours.keys.count { it in TORSO_SECTION_IDS }
             val status = when {
                 observation.bodyCount != 1 ||
                     PortraitRegionId.SUBJECT_MASK !in observation.masks -> SilhouetteVisualStatus.FAILED
@@ -95,6 +120,10 @@ private class MarketSilhouetteLabRunner(
             }
             val runtimeLog = buildList {
                 add("mode=B1_SILHOUETTE_OBSERVATION")
+                add("diagnostic_schema=$POSTAC_MASTER_BUILD_FINGERPRINT_VERSION")
+                add("build_branch=$POSTAC_MASTER_BUILD_BRANCH")
+                add("build_source_commit=$POSTAC_MASTER_BUILD_SOURCE_COMMIT")
+                add("build_active_fixes=${POSTAC_MASTER_ACTIVE_FIXES.joinToString(",")}")
                 add("backend_pose=ML_KIT_POSE")
                 add("backend_mask=ML_KIT_SELFIE_SEGMENTATION")
                 add("encoded=${decoded.metadata.encodedWidth}x${decoded.metadata.encodedHeight}")
@@ -107,7 +136,14 @@ private class MarketSilhouetteLabRunner(
                 add("pose_landmark_count=$poseLandmarkCount")
                 add("mask_count=${observation.masks.size}")
                 add("derived_region_count=${enrichment.derivedRegionIds.size}")
+                add("limb_section_raw_count=$rawLimbCount")
+                add("limb_section_filtered_count=$filteredLimbCount")
+                add("limb_section_removed_count=${rawLimbCount - filteredLimbCount}")
+                add("torso_section_raw_count=$rawTorsoCount")
+                add("torso_section_filtered_count=$filteredTorsoCount")
+                add("torso_section_removed_count=${rawTorsoCount - filteredTorsoCount}")
                 add("local_section_rejection_count=${sectionValidation.rejectedSections.size}")
+                add("torso_section_rejection_count=${torsoValidation.rejectedSections.size}")
                 add("silhouette_status=${status.name}")
                 capabilities.forEach { capability ->
                     add(
@@ -117,11 +153,27 @@ private class MarketSilhouetteLabRunner(
                 }
                 sectionValidation.rejectedSections.forEach { rejected ->
                     add(
-                        "rejected_section=${rejected.sectionId}," +
+                        "rejected_limb_section=${rejected.sectionId}," +
+                            "reason=${rejected.reason.name}," +
                             "measured_px=${rejected.measuredPixels}," +
-                            "bone_px=${rejected.referenceBonePixels}," +
+                            "reference_px=${rejected.referenceBonePixels}," +
                             "ratio=${rejected.measuredToBoneRatio}," +
-                            "maximum_ratio=${rejected.maximumAllowedRatio}"
+                            "ratio_threshold=${rejected.maximumAllowedRatio}," +
+                            "midpoint_distance_px=${rejected.midpointDistancePixels}," +
+                            "midpoint_ratio=${rejected.midpointDistanceToBoneRatio}," +
+                            "midpoint_ratio_threshold=${rejected.maximumMidpointDistanceToBoneRatio}"
+                    )
+                }
+                torsoValidation.rejectedSections.forEach { rejected ->
+                    add(
+                        "rejected_torso_section=${rejected.sectionId}," +
+                            "reason=${rejected.reason.name}," +
+                            "intersecting_limb_segment=${rejected.intersectingLimbSegment.orEmpty()}," +
+                            "expected_width=${rejected.expectedWidthNormalized}," +
+                            "measured_width=${rejected.measuredWidthNormalized}," +
+                            "ratio=${rejected.measuredToExpectedRatio}," +
+                            "left_overflow=${rejected.leftOverflowNormalized}," +
+                            "right_overflow=${rejected.rightOverflowNormalized}"
                     )
                 }
                 enrichment.skippedSections.forEach { skipped ->
@@ -144,6 +196,12 @@ private class MarketSilhouetteLabRunner(
                     add(
                         "${sectionValidation.rejectedSections.size} limb cross-sections were removed " +
                             "because they spanned unrelated foreground instead of the local limb."
+                    )
+                }
+                if (torsoValidation.rejectedSections.isNotEmpty()) {
+                    add(
+                        "${torsoValidation.rejectedSections.size} torso cross-sections were removed " +
+                            "because they were non-local, oversized or occluded by a visible limb."
                     )
                 }
                 add("Visible clothing is part of the measured silhouette by design.")
