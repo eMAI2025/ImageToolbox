@@ -24,7 +24,8 @@ object FaceGeometryAcceptanceGate {
         visibleGeometry: FaceVisibleGeometryResult,
         awareness: FaceRegionAwareness,
         occlusionEvidence: FaceOcclusionPartialPolicy.OcclusionEvidence =
-            FaceOcclusionPartialPolicy.OcclusionEvidence.unavailable()
+            FaceOcclusionPartialPolicy.OcclusionEvidence.unavailable(),
+        inputQualityEvidence: FaceInputQualityPolicy.Evidence? = null
     ): FaceGeometryAcceptanceDecision {
         if (rawObservation.faceCount <= 0) {
             return FaceGeometryAcceptanceDecision(
@@ -50,6 +51,13 @@ object FaceGeometryAcceptanceGate {
             rawObservation = rawObservation,
             awareness = awareness
         ).reasons
+
+        inputQualityEvidence?.let { evidence ->
+            reasons += FaceInputQualityPolicy.evaluate(
+                observation = visibleObservation,
+                evidence = evidence
+            ).reasons
+        }
 
         if (awareness.poseMode == FacePoseMode.UNKNOWN) {
             reasons += FaceGeometryRejectionReason.MISSING_REQUIRED_POSE_OR_AXIS
