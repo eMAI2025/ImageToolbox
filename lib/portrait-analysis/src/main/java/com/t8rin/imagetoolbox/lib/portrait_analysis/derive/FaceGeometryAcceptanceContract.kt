@@ -10,14 +10,6 @@ package com.t8rin.imagetoolbox.lib.portrait_analysis.derive
 
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.SubjectObservation
 
-/**
- * Fail-closed contract separating face detection from permission to use face geometry.
- *
- * A detector bounding box is evidence that a face candidate exists. It is not evidence that
- * landmarks, contours or mesh are safe to render or edit. The active observation is therefore
- * present only after a later acceptance gate explicitly accepts the candidate geometry.
- * Raw detector evidence is always retained separately for diagnostics.
- */
 const val FACE_GEOMETRY_ACCEPTANCE_GATE_VERSION = "POSTAC_MASTER_FACE_GATE_V1"
 const val FACE_GEOMETRY_ACCEPTANCE_RESULT_VERSION =
     "POSTAC_MASTER_FACE_GEOMETRY_ACCEPTANCE_RESULT_V1"
@@ -49,6 +41,13 @@ enum class FaceGeometryRejectionReason {
     CONTOUR_SELF_INTERSECTION,
     CONTOUR_CROSSES_UNSUPPORTED_SPACE,
     MESH_TRIANGLE_REFERENCES_REJECTED_VERTEX,
+    FACE_OCCLUDED_BY_HAIR,
+    FACE_OCCLUDED_BY_HAND,
+    FACE_OCCLUDED_BY_PHONE,
+    FACE_OCCLUDED_BY_STRONG_SHADOW,
+    FACE_CROPPED_BY_FRAME,
+    INSUFFICIENT_VISIBLE_FACE_ANCHORS,
+    OCCLUSION_EVIDENCE_UNAVAILABLE,
     DUAL_PASS_ROI_INCONSISTENT,
     RAW_VISIBLE_GEOMETRY_CONTRADICTION
 }
@@ -70,10 +69,6 @@ data class FaceGeometryReasonEvidence(
     }
 }
 
-/**
- * Provenance required to prove which backend, gate and build produced the decision.
- * Model fields remain nullable for detector-only backends that do not load an external model asset.
- */
 data class FaceGeometryAcceptanceProvenance(
     val backendId: String,
     val backendVersion: String?,
@@ -94,12 +89,6 @@ data class FaceGeometryAcceptanceProvenance(
     }
 }
 
-/**
- * Canonical face result used by diagnostics, overlay routing and later edit gates.
- *
- * `rawEvidence` is detector evidence only. `activeGeometry` is the sole geometry that may be
- * rendered or edited. A rejected result is structurally unable to carry active geometry.
- */
 data class FaceGeometryAcceptanceResult(
     val status: FaceGeometryAcceptanceStatus,
     val rawEvidence: SubjectObservation?,
@@ -146,10 +135,6 @@ data class FaceGeometryAcceptanceResult(
     }
 }
 
-/**
- * Legacy UI statuses remain diagnostic labels only. In particular, `PARTIAL` never grants geometry
- * usability. Usability is projected exclusively from the canonical fail-closed result.
- */
 data class FaceGeometryLegacyProjection(
     val legacyVisualStatus: String?,
     val canonicalStatus: FaceGeometryAcceptanceStatus,
@@ -194,10 +179,6 @@ data class FaceGeometryAcceptanceDecision(
         }
     }
 
-    /**
-     * Compatibility bridge for the existing runtime gate. New consumers should use the canonical
-     * result and must not infer usability from legacy visual statuses such as `PARTIAL`.
-     */
     fun toCanonicalResult(
         provenance: FaceGeometryAcceptanceProvenance
     ): FaceGeometryAcceptanceResult = FaceGeometryAcceptanceResult(
@@ -239,6 +220,13 @@ private fun FaceGeometryRejectionReason.defaultSeverity(): FaceGeometryReasonSev
     FaceGeometryRejectionReason.CONTOUR_SELF_INTERSECTION,
     FaceGeometryRejectionReason.CONTOUR_CROSSES_UNSUPPORTED_SPACE,
     FaceGeometryRejectionReason.MESH_TRIANGLE_REFERENCES_REJECTED_VERTEX,
+    FaceGeometryRejectionReason.FACE_OCCLUDED_BY_HAIR,
+    FaceGeometryRejectionReason.FACE_OCCLUDED_BY_HAND,
+    FaceGeometryRejectionReason.FACE_OCCLUDED_BY_PHONE,
+    FaceGeometryRejectionReason.FACE_OCCLUDED_BY_STRONG_SHADOW,
+    FaceGeometryRejectionReason.FACE_CROPPED_BY_FRAME,
+    FaceGeometryRejectionReason.INSUFFICIENT_VISIBLE_FACE_ANCHORS,
+    FaceGeometryRejectionReason.OCCLUSION_EVIDENCE_UNAVAILABLE,
     FaceGeometryRejectionReason.DUAL_PASS_ROI_INCONSISTENT,
     FaceGeometryRejectionReason.RAW_VISIBLE_GEOMETRY_CONTRADICTION ->
         FaceGeometryReasonSeverity.ERROR
