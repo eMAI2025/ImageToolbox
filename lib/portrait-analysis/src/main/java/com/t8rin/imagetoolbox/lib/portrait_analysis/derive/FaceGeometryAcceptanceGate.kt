@@ -45,6 +45,15 @@ object FaceGeometryAcceptanceGate {
         val partialPose = awareness.poseMode == FacePoseMode.HALF_PROFILE ||
             awareness.poseMode == FacePoseMode.PROFILE
 
+        // Backend-specific evidence is evaluated before generic topology checks. The quality gate
+        // returns reasons only; it never modifies, mirrors or synthesizes detector geometry.
+        val mlKitQuality = MlKitFaceQualityGate.evaluate(
+            rawObservation = rawObservation,
+            candidateObservation = visibleObservation,
+            awareness = awareness
+        )
+        reasons += mlKitQuality.reasons
+
         if (awareness.poseMode == FacePoseMode.UNKNOWN) {
             reasons += FaceGeometryRejectionReason.MISSING_REQUIRED_POSE_OR_AXIS
         }
