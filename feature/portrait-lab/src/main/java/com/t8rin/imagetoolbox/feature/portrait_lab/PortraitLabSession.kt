@@ -12,6 +12,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.FaceGeometryAcceptanceDecision
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.FaceRegionAwareness
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.MlKitDualPassConsistencyGate
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ObservationBackend
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.SubjectObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.overlay.PortraitOverlayScene
@@ -47,7 +48,10 @@ data class PortraitLabRunOutput(
     val warnings: List<String>,
     val faceRegionAwareness: FaceRegionAwareness? = null,
     val rawObservation: SubjectObservation? = null,
-    val faceGeometryAcceptance: FaceGeometryAcceptanceDecision? = null
+    val faceGeometryAcceptance: FaceGeometryAcceptanceDecision? = null,
+    val roiRawObservation: SubjectObservation? = null,
+    val dualPassConsistency: MlKitDualPassConsistencyGate.Assessment? = null,
+    val roiObservationProvider: (suspend (Bitmap) -> SubjectObservation)? = null
 )
 
 sealed interface PortraitLabRunResult {
