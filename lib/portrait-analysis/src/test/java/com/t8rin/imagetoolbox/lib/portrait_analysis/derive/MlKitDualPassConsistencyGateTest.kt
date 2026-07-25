@@ -169,6 +169,7 @@ class MlKitDualPassConsistencyGateTest {
             faceCount = 1,
             bodyCount = 0,
             landmarks = landmarks,
+            regions = emptyMap(),
             pose = pose,
             facePoses = mapOf(0 to pose),
             contours = mapOf(
