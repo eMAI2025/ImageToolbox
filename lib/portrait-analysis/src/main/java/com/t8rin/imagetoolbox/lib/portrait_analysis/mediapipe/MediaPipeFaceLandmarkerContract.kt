@@ -8,7 +8,8 @@
 
 package com.t8rin.imagetoolbox.lib.portrait_analysis.mediapipe
 
-import com.t8rin.imagetoolbox.lib.portrait_analysis.face.FaceGeometryAcceptanceResult
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.FaceGeometryAcceptanceDecision
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.FaceGeometryAcceptanceStatus
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.NormalizedPoint3D
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.SubjectObservation
 
@@ -139,17 +140,20 @@ data class MediaPipeFaceLandmarkerDiagnostics(
  * 2. visibility-filtered candidate geometry;
  * 3. geometry accepted by the common fail-closed gate.
  *
- * A MediaPipe result never bypasses [FaceGeometryAcceptanceResult].
+ * A MediaPipe result never bypasses [FaceGeometryAcceptanceDecision].
  */
 data class MediaPipeFaceLandmarkerOutput(
     val rawObservation: SubjectObservation,
     val visibleObservation: SubjectObservation?,
-    val acceptance: FaceGeometryAcceptanceResult,
+    val acceptance: FaceGeometryAcceptanceDecision,
     val diagnostics: MediaPipeFaceLandmarkerDiagnostics
 ) {
     init {
         if (acceptance.activeObservation == null) {
-            require(acceptance.status.name != "FACE_DETECTED_GEOMETRY_ACCEPTED")
+            require(
+                acceptance.status !=
+                    FaceGeometryAcceptanceStatus.FACE_DETECTED_GEOMETRY_ACCEPTED
+            )
         }
         require(acceptance.rawObservation == rawObservation)
     }
