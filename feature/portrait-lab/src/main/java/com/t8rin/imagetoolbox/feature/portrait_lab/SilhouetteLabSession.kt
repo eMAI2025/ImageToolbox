@@ -11,6 +11,7 @@ package com.t8rin.imagetoolbox.feature.portrait_lab
 import android.graphics.Bitmap
 import android.net.Uri
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodyLandmarkVisibilityGate
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodyLimbCapabilityGate
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodySilhouetteEnrichmentResult
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.SubjectObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.overlay.PortraitOverlayScene
@@ -42,7 +43,10 @@ data class SilhouetteLabRunOutput(
     /** Separate diagnostic evidence; callers may supply the unmodified merged backend payload. */
     val rawObservation: SubjectObservation = observation,
     val bodyVisibility: BodyLandmarkVisibilityGate.Assessment =
-        BodyLandmarkVisibilityGate.evaluate(rawObservation)
+        BodyLandmarkVisibilityGate.evaluate(rawObservation),
+    /** Independent upper-arm, forearm and hand capabilities; unavailable hands never gain endpoints. */
+    val limbCapabilities: BodyLimbCapabilityGate.Assessment =
+        BodyLimbCapabilityGate.evaluate(rawObservation, bodyVisibility)
 )
 
 sealed interface SilhouetteLabRunResult {
