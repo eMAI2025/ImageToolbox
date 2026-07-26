@@ -65,6 +65,26 @@ class BackgroundReplacementContractTest {
     }
 
     @Test
+    fun `background dimensions mismatch blocks request without implicit resampling`() {
+        val decision = BackgroundReplacementContract.evaluate(
+            foreground = readyForeground(),
+            backgroundSource = BackgroundReplacementContract.BackgroundSource.RasterReference(
+                sourceId = "replacement-2",
+                width = 8,
+                height = 4,
+                orientationApplied = true
+            )
+        )
+
+        assertEquals(BackgroundReplacementContract.Status.BLOCKED, decision.status)
+        assertNull(decision.request)
+        assertTrue(
+            BackgroundReplacementContract.Blocker.BACKGROUND_FOREGROUND_DIMENSIONS_MISMATCH in
+                decision.blockers
+        )
+    }
+
+    @Test
     fun `accepted matte and explicit background create architecture request only`() {
         val foreground = readyForeground()
         val background = solid()
