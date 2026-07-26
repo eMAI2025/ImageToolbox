@@ -9,27 +9,34 @@
 package com.t8rin.imagetoolbox.feature.portrait_lab
 
 import android.graphics.Bitmap
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.FaceGeometryAcceptanceGate
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.FaceGeometryAcceptanceStatus
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.FaceGeometryRejectionReason
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.FaceInputQualityPolicy
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.FaceRegionAwarenessAnalyzer
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.FaceVisibleGeometryFilter
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.MlKitDualPassConsistencyGate
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ClassificationObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ContourObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.LandmarkObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.MeshObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.MeshTriangleObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.NormalizedPoint3D
+import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ObservationBackend
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.PoseObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.RegionObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.SubjectObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.overlay.PortraitOverlaySceneBuilder
 import com.t8rin.imagetoolbox.lib.portrait_analysis.visual.ImageRenderTransform
 import com.t8rin.imagetoolbox.lib.portrait_analysis.visual.VisualProofEvaluator
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
-import kotlin.math.max
-import kotlin.math.min
 
 const val PORTRAIT_MAX_FACE_CANDIDATES = 2
 
 private val faceIndexRegex = Regex("^face_(\\d+)_")
+private val fullNormalizedRect = PortraitNormalizedRect(0f, 0f, 1f, 1f)
 
 data class PortraitNormalizedRect(
     val left: Float,
@@ -72,7 +79,7 @@ fun extractPortraitFaceCandidates(output: PortraitLabRunOutput): List<PortraitFa
         .sortedBy(PortraitFaceCandidate::faceIndex)
         .toList()
 
-fun focusPortraitOutput(
+suspend fun focusPortraitOutput(
     output: PortraitLabRunOutput,
     candidate: PortraitFaceCandidate
 ): Result<PortraitLabRunOutput> = runCatching {
@@ -85,8 +92,83 @@ fun focusPortraitOutput(
     val previewCrop = output.previewBitmap.cropNormalized(crop)
     val selectedObservation = output.observation.focusOnFace(candidate.faceIndex, crop)
     val regionAnalysis = FaceRegionAwarenessAnalyzer.analyzeAndEnrich(selectedObservation)
-    val focusedObservation = regionAnalysis.observation
     val awareness = regionAnalysis.awareness
+    val visibleGeometry = FaceVisibleGeometryFilter.filter(
+        observation = regionAnalysis.observation,
+        awareness = awareness
+    )
+
+    val inputQualityEvidence = FaceInputQualityPolicy.Evidence(
+        sourceWidth = sourceCrop.width,
+        sourceHeight = sourceCrop.height,
+        encodedWidth = output.sourceMetadata.encodedWidth,
+        encodedHeight = output.sourceMetadata.encodedHeight,
+        orientedWidth = output.sourceMetadata.orientedWidth,
+        orientedHeight = output.sourceMetadata.orientedHeight,
+        exifOrientation = output.sourceMetadata.exifOrientation,
+        orientationDegrees = output.sourceMetadata.orientationDegrees,
+        mirrored = output.sourceMetadata.mirrored,
+        normalizedEdgeEnergy = sourceCrop.normalizedEdgeEnergy()
+    )
+    val inputQuality = FaceInputQualityPolicy.evaluate(
+        observation = visibleGeometry.observation,
+        evidence = inputQualityEvidence
+    )
+
+    var roiPassFailure: String? = null
+    val roiDetectorObservation = if (
+        output.selectedBackend == ObservationBackend.ML_KIT_FACE_DETECTION
+    ) {
+        val provider = output.roiObservationProvider
+        if (provider == null) {
+            roiPassFailure = "ML Kit ROI provider unavailable"
+            null
+        } else {
+            try {
+                provider(sourceCrop)
+            } catch (error: Throwable) {
+                roiPassFailure = error.message ?: error::class.simpleName ?: "unknown ROI failure"
+                null
+            }
+        }
+    } else {
+        null
+    }
+    val roiSelectedObservation = roiDetectorObservation
+        ?.takeIf { it.faceCount == 1 }
+        ?.focusOnFace(faceIndex = 0, crop = fullNormalizedRect)
+    val roiRegionAnalysis = roiSelectedObservation
+        ?.let(FaceRegionAwarenessAnalyzer::analyzeAndEnrich)
+    val dualPassConsistency = if (
+        output.selectedBackend == ObservationBackend.ML_KIT_FACE_DETECTION
+    ) {
+        MlKitDualPassConsistencyGate.evaluate(
+            fullPassObservation = selectedObservation,
+            fullPassAwareness = awareness,
+            roiPassObservation = roiSelectedObservation,
+            roiPassAwareness = roiRegionAnalysis?.awareness
+        )
+    } else {
+        null
+    }
+
+    val gateAcceptance = FaceGeometryAcceptanceGate.evaluate(
+        rawObservation = selectedObservation,
+        visibleGeometry = visibleGeometry,
+        awareness = awareness,
+        inputQualityEvidence = inputQualityEvidence
+    )
+    val acceptance = if (dualPassConsistency?.accepted == false) {
+        gateAcceptance.copy(
+            status = FaceGeometryAcceptanceStatus.FACE_DETECTED_GEOMETRY_REJECTED,
+            activeObservation = null,
+            reasons = gateAcceptance.reasons +
+                FaceGeometryRejectionReason.RAW_VISIBLE_GEOMETRY_CONTRADICTION
+        )
+    } else {
+        gateAcceptance
+    }
+    val focusedObservation = FaceGeometryAcceptanceGate.renderObservation(acceptance)
     val transform = ImageRenderTransform.fit(
         sourceWidth = sourceCrop.width,
         sourceHeight = sourceCrop.height,
@@ -98,18 +180,16 @@ fun focusPortraitOutput(
     output.copy(
         sourceBitmap = sourceCrop,
         previewBitmap = previewCrop,
-        sourceMetadata = PortraitSourceMetadata(
-            encodedWidth = sourceCrop.width,
-            encodedHeight = sourceCrop.height,
-            orientedWidth = sourceCrop.width,
-            orientedHeight = sourceCrop.height,
-            exifOrientation = 1,
-            orientationDegrees = 0,
-            mirrored = false,
+        sourceMetadata = output.sourceMetadata.copy(
             previewWidth = previewCrop.width,
             previewHeight = previewCrop.height
         ),
         observation = focusedObservation,
+        rawObservation = selectedObservation,
+        faceGeometryAcceptance = acceptance,
+        roiRawObservation = roiDetectorObservation,
+        dualPassConsistency = dualPassConsistency,
+        roiObservationProvider = null,
         visualProof = visualProof,
         overlayScene = PortraitOverlaySceneBuilder.build(focusedObservation),
         faceRegionAwareness = awareness,
@@ -123,6 +203,50 @@ fun focusPortraitOutput(
             add("p2_pose_mode=${awareness.poseMode.name}")
             add("p2_dominant_image_side=${awareness.dominantImageSide.name}")
             add("p2_full_face_geometry_allowed=${awareness.fullFaceGeometryAllowed}")
+            add("p2_visible_filter_applied=${visibleGeometry.applied}")
+            add("p2_visible_filter_side=${visibleGeometry.activeImageSide.name}")
+            add("p2_raw_landmarks=${visibleGeometry.rawLandmarkCount}")
+            add("p2_visible_landmarks=${visibleGeometry.visibleLandmarkCount}")
+            add("p2_removed_landmarks=${visibleGeometry.removedLandmarkCount}")
+            add("p2_raw_contours=${visibleGeometry.rawContourCount}")
+            add("p2_visible_contours=${visibleGeometry.visibleContourCount}")
+            add("p2_split_contours=${visibleGeometry.splitContourCount}")
+            add("p2_raw_triangles=${visibleGeometry.rawTriangleCount}")
+            add("p2_visible_triangles=${visibleGeometry.visibleTriangleCount}")
+            add("face_gate_fingerprint=${FaceGeometryAcceptanceGate.FINGERPRINT}")
+            add("face_input_quality_fingerprint=${FaceInputQualityPolicy.FINGERPRINT}")
+            add("face_input_quality_accepted=${inputQuality.accepted}")
+            add("face_input_quality_reasons=${inputQuality.reasons.joinToString(",") { it.name }}")
+            add("face_width_pixels=${inputQuality.metrics.faceWidthPixels}")
+            add("face_height_pixels=${inputQuality.metrics.faceHeightPixels}")
+            add("face_edge_energy=${inputQuality.metrics.normalizedEdgeEnergy}")
+            add("face_out_of_frame_ratio=${inputQuality.metrics.outOfFramePointRatio}")
+            add("face_transform_consistent=${inputQuality.metrics.transformConsistent}")
+            add("source_exif_orientation=${output.sourceMetadata.exifOrientation}")
+            add("source_orientation_degrees=${output.sourceMetadata.orientationDegrees}")
+            add("source_mirrored=${output.sourceMetadata.mirrored}")
+            add("face_detection_present=${selectedObservation.faceCount > 0}")
+            add("face_geometry_status=${acceptance.status.name}")
+            add("face_geometry_reasons=${acceptance.reasons.joinToString(",") { it.name }}")
+            add("face_raw_landmark_count=${selectedObservation.landmarks.size}")
+            add("face_active_landmark_count=${focusedObservation.landmarks.size}")
+            add("face_raw_contour_count=${selectedObservation.contours.size}")
+            add("face_active_contour_count=${focusedObservation.contours.size}")
+            add("face_raw_triangle_count=${selectedObservation.meshes.values.sumOf { it.triangles.size }}")
+            add("face_active_triangle_count=${focusedObservation.meshes.values.sumOf { it.triangles.size }}")
+            dualPassConsistency?.let { dual ->
+                add("dual_pass_fingerprint=${MlKitDualPassConsistencyGate.FINGERPRINT}")
+                add("dual_pass_roi_face_count=${roiDetectorObservation?.faceCount ?: 0}")
+                add("dual_pass_accepted=${dual.accepted}")
+                add("dual_pass_reasons=${dual.reasons.joinToString(",") { it.name }}")
+                add("dual_pass_bounds_iou=${dual.metrics.boundsIou}")
+                add("dual_pass_yaw_delta_degrees=${dual.metrics.yawDeltaDegrees}")
+                add("dual_pass_roll_delta_degrees=${dual.metrics.rollDeltaDegrees}")
+                add("dual_pass_anchor_ids=${dual.metrics.comparedAnchorIds.sorted().joinToString(",")}")
+                add("dual_pass_anchor_max_ratio=${dual.metrics.maximumAnchorDistanceRatio}")
+                add("dual_pass_anchor_mean_ratio=${dual.metrics.meanAnchorDistanceRatio}")
+            }
+            roiPassFailure?.let { add("dual_pass_runtime_failure=$it") }
             awareness.regions.values.forEach { region ->
                 add(
                     "p2_region=${region.region.name}," +
@@ -145,7 +269,35 @@ fun focusPortraitOutput(
             if (!awareness.fullFaceGeometryAllowed) {
                 add(
                     "Full-face geometry is blocked for this pose. " +
-                        "Available image-side, jaw and chin regions remain independently reportable."
+                        "Only trusted visible-side and center geometry can be considered by the gate."
+                )
+            }
+            if (visibleGeometry.applied) {
+                add(
+                    "Hidden-side detector proposals were removed from candidate geometry: " +
+                        "landmarks=${visibleGeometry.removedLandmarkCount}, " +
+                        "triangles=${visibleGeometry.removedTriangleCount}."
+                )
+            }
+            if (!inputQuality.accepted) {
+                add(
+                    "Input image quality is insufficient or transform provenance is inconsistent. " +
+                        "Choose a sharper image with a larger face. Reasons: " +
+                        inputQuality.reasons.joinToString { it.name }
+                )
+            }
+            if (dualPassConsistency?.accepted == false) {
+                add(
+                    "Full-image and high-resolution ROI face observations are inconsistent. " +
+                        "No detector outputs were averaged or merged; active geometry was rejected. " +
+                        "Reasons: ${dualPassConsistency.reasons.joinToString { it.name }}"
+                )
+            }
+            if (acceptance.activeObservation == null) {
+                add(
+                    "Face detected but geometry rejected. Active overlay is empty; raw detector " +
+                        "evidence is retained separately. Reasons: " +
+                        acceptance.reasons.joinToString { it.name }
                 )
             }
         }
@@ -295,5 +447,37 @@ private fun Bitmap.cropNormalized(rect: PortraitNormalizedRect): Bitmap {
     val top = floor(rect.top * height).toInt().coerceIn(0, height - 1)
     val right = ceil(rect.right * width).toInt().coerceIn(left + 1, width)
     val bottom = ceil(rect.bottom * height).toInt().coerceIn(top + 1, height)
-    return Bitmap.createBitmap(this, left, top, max(1, right - left), max(1, bottom - top))
+    return Bitmap.createBitmap(this, left, top, right - left, bottom - top)
+}
+
+/**
+ * Normalized local edge energy sampled on a bounded grid. The score is used only as a rejection
+ * signal; it does not sharpen or modify the source image.
+ */
+private fun Bitmap.normalizedEdgeEnergy(): Float? {
+    if (width < 3 || height < 3) return null
+    val stride = maxOf(1, minOf(width, height) / 256)
+    var sum = 0.0
+    var count = 0L
+    var y = stride
+    while (y < height - stride) {
+        var x = stride
+        while (x < width - stride) {
+            val center = getPixel(x, y).luma()
+            val right = getPixel(x + stride, y).luma()
+            val bottom = getPixel(x, y + stride).luma()
+            sum += abs(center - right) + abs(center - bottom)
+            count += 2
+            x += stride
+        }
+        y += stride
+    }
+    return if (count > 0) (sum / count / 255.0).toFloat() else null
+}
+
+private fun Int.luma(): Int {
+    val red = this shr 16 and 0xff
+    val green = this shr 8 and 0xff
+    val blue = this and 0xff
+    return (red * 299 + green * 587 + blue * 114) / 1000
 }

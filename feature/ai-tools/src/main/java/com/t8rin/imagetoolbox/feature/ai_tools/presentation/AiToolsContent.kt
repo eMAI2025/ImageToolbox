@@ -73,12 +73,21 @@ import com.t8rin.imagetoolbox.feature.ai_tools.presentation.components.AiToolsRe
 import com.t8rin.imagetoolbox.feature.ai_tools.presentation.components.NeuralSaveProgressDialog
 import com.t8rin.imagetoolbox.feature.ai_tools.presentation.screenLogic.AiToolsComponent
 import com.t8rin.imagetoolbox.feature.portrait_lab.PortraitLabContent
+import com.t8rin.imagetoolbox.feature.portrait_lab.SilhouetteLabContent
 
 @Composable
 fun AiToolsContent(
     component: AiToolsComponent
 ) {
     var showPortraitLab by rememberSaveable { mutableStateOf(false) }
+    var showSilhouetteLab by rememberSaveable { mutableStateOf(false) }
+
+    if (showSilhouetteLab) {
+        SilhouetteLabContent(
+            onGoBack = { showSilhouetteLab = false }
+        )
+        return
+    }
 
     if (showPortraitLab) {
         PortraitLabContent(
@@ -295,6 +304,12 @@ fun AiToolsContent(
                 )
             },
             topAppBarPersistentActions = {
+                TextButton(
+                    onClick = { showSilhouetteLab = true },
+                    enabled = !previewMode
+                ) {
+                    Text("Silhouette Lab")
+                }
                 TextButton(
                     onClick = { showPortraitLab = true },
                     enabled = !previewMode
