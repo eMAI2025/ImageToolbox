@@ -12,6 +12,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodyLandmarkVisibilityGate
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodyLimbCapabilityGate
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodyMaskComponentGate
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodySilhouetteEnrichmentResult
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.SubjectObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.overlay.PortraitOverlayScene
@@ -46,7 +47,13 @@ data class SilhouetteLabRunOutput(
         BodyLandmarkVisibilityGate.evaluate(rawObservation),
     /** Independent upper-arm, forearm and hand capabilities; unavailable hands never gain endpoints. */
     val limbCapabilities: BodyLimbCapabilityGate.Assessment =
-        BodyLimbCapabilityGate.evaluate(rawObservation, bodyVisibility)
+        BodyLimbCapabilityGate.evaluate(rawObservation, bodyVisibility),
+    /**
+     * Raw and accepted connected-mask components remain separate. Runtime adapters populate this
+     * after component extraction; an empty value means no component evidence was supplied and must
+     * not be interpreted as a validated person mask.
+     */
+    val maskComponents: BodyMaskComponentGate.Assessment = BodyMaskComponentGate.Assessment.empty()
 )
 
 sealed interface SilhouetteLabRunResult {
