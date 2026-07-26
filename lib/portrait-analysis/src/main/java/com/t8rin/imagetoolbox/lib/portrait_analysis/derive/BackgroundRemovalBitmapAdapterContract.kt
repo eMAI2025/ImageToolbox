@@ -47,7 +47,11 @@ object BackgroundRemovalBitmapAdapterContract {
         val provenanceCommit: String
     )
 
-    data class RenderRequest(
+    /**
+     * Capability token created only by [prepare]. The internal constructor prevents downstream
+     * feature modules from fabricating a render request around an arbitrary mask.
+     */
+    data class RenderRequest internal constructor(
         val source: SourceDescriptor,
         val alphaMatte: BackgroundRemovalAlphaMatteAdapter.AlphaMatte,
         val operation: BackgroundRemovalPreviewPlan.Operation,
@@ -67,7 +71,7 @@ object BackgroundRemovalBitmapAdapterContract {
         }
     }
 
-    data class Preparation(
+    data class Preparation internal constructor(
         val status: Status,
         val blockers: Set<Blocker>,
         val request: RenderRequest?,
