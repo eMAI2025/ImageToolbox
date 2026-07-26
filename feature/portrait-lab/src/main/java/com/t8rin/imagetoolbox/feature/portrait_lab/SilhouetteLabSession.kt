@@ -44,10 +44,14 @@ data class SilhouetteLabRunOutput(
     val warnings: List<String>,
     /** Unmodified merged backend payload plus skeleton evidence, retained diagnostically. */
     val rawObservation: SubjectObservation = observation,
-    /** Candidate after visibility, component and mask/pose reduction, before section acceptance. */
-    val filteredObservation: SubjectObservation = observation,
     val bodyVisibility: BodyLandmarkVisibilityGate.Assessment =
         BodyLandmarkVisibilityGate.evaluate(rawObservation),
+    /**
+     * Candidate after the per-landmark visibility gate. Market runtime may provide a deeper
+     * mask/component-filtered candidate; this default never promotes rejected raw landmarks.
+     */
+    val filteredObservation: SubjectObservation =
+        BodyLandmarkVisibilityGate.filterForActiveGeometry(rawObservation, bodyVisibility),
     /** Independent upper-arm, forearm and hand capabilities; unavailable hands never gain endpoints. */
     val limbCapabilities: BodyLimbCapabilityGate.Assessment =
         BodyLimbCapabilityGate.evaluate(rawObservation, bodyVisibility),
