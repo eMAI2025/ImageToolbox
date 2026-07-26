@@ -83,6 +83,22 @@ class PostacMasterDiagnosticLayersTest {
         assertEquals(setOf("BODY_GEOMETRY_EVIDENCE_REJECTED"), layers.rejectionCodes)
     }
 
+    @Test
+    fun `physical export contract requires all three geometry layers and both mask images`() {
+        assertEquals(
+            linkedSetOf(
+                "diagnostic_manifest.json",
+                "geometry_raw.json",
+                "geometry_filtered.json",
+                "geometry_accepted.json",
+                "mask_raw.png",
+                "mask_filtered.png",
+                "runtime_log.txt"
+            ),
+            PostacMasterDiagnosticLayers.REQUIRED_EXPORT_FILES
+        )
+    }
+
     private fun observation(
         faceCount: Int = 0,
         bodyCount: Int = 0,
