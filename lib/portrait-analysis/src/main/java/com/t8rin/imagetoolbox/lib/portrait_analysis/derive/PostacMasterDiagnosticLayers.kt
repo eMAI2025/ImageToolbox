@@ -82,6 +82,22 @@ data class PostacMasterDiagnosticLayers(
 
     companion object {
         const val CONTRACT_VERSION = "POSTAC_MASTER_DIAGNOSTIC_LAYERS_V1"
+        const val MANIFEST_FILE = "diagnostic_manifest.json"
+        const val RAW_GEOMETRY_FILE = "geometry_raw.json"
+        const val FILTERED_GEOMETRY_FILE = "geometry_filtered.json"
+        const val ACCEPTED_GEOMETRY_FILE = "geometry_accepted.json"
+        const val RAW_MASK_FILE = "mask_raw.png"
+        const val FILTERED_MASK_FILE = "mask_filtered.png"
+
+        val REQUIRED_EXPORT_FILES: Set<String> = linkedSetOf(
+            MANIFEST_FILE,
+            RAW_GEOMETRY_FILE,
+            FILTERED_GEOMETRY_FILE,
+            ACCEPTED_GEOMETRY_FILE,
+            RAW_MASK_FILE,
+            FILTERED_MASK_FILE,
+            "runtime_log.txt"
+        )
 
         fun fromFace(
             raw: SubjectObservation,
