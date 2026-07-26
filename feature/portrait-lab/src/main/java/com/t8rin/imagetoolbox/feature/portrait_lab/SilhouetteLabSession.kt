@@ -13,6 +13,7 @@ import android.net.Uri
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodyLandmarkVisibilityGate
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodyLimbCapabilityGate
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodyMaskComponentGate
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodyMaskPoseConsistencyGate
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodySilhouetteEnrichmentResult
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.SubjectObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.overlay.PortraitOverlayScene
@@ -53,7 +54,17 @@ data class SilhouetteLabRunOutput(
      * after component extraction; an empty value means no component evidence was supplied and must
      * not be interpreted as a validated person mask.
      */
-    val maskComponents: BodyMaskComponentGate.Assessment = BodyMaskComponentGate.Assessment.empty()
+    val maskComponents: BodyMaskComponentGate.Assessment = BodyMaskComponentGate.Assessment.empty(),
+    /**
+     * Per-landmark, segment and region mask/pose consistency. Missing mask evidence is fail-closed;
+     * unrelated regions remain independently reportable when contamination is localized.
+     */
+    val maskPoseConsistency: BodyMaskPoseConsistencyGate.Assessment =
+        BodyMaskPoseConsistencyGate.evaluate(
+            observation = rawObservation,
+            visibility = bodyVisibility,
+            maskComponents = maskComponents
+        )
 )
 
 sealed interface SilhouetteLabRunResult {
