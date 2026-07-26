@@ -34,7 +34,7 @@ data class SilhouetteLabRunOutput(
     val sourceBitmap: Bitmap,
     val previewBitmap: Bitmap,
     val sourceMetadata: PortraitSourceMetadata,
-    /** Visibility-filtered and locality-validated geometry used by overlay/export. */
+    /** Accepted geometry used by overlay/export. */
     val observation: SubjectObservation,
     val enrichment: BodySilhouetteEnrichmentResult,
     val overlayScene: PortraitOverlayScene,
@@ -42,8 +42,10 @@ data class SilhouetteLabRunOutput(
     val regionCapabilities: List<SilhouetteRegionCapability>,
     val runtimeLog: List<String>,
     val warnings: List<String>,
-    /** Separate diagnostic evidence; callers may supply the unmodified merged backend payload. */
+    /** Unmodified merged backend payload plus skeleton evidence, retained diagnostically. */
     val rawObservation: SubjectObservation = observation,
+    /** Candidate after visibility, component and mask/pose reduction, before section acceptance. */
+    val filteredObservation: SubjectObservation = observation,
     val bodyVisibility: BodyLandmarkVisibilityGate.Assessment =
         BodyLandmarkVisibilityGate.evaluate(rawObservation),
     /** Independent upper-arm, forearm and hand capabilities; unavailable hands never gain endpoints. */
