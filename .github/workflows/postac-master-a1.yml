@@ -38,6 +38,9 @@ jobs:
     name: Portrait analysis tests
     runs-on: ubuntu-latest
     timeout-minutes: 80
+    env:
+      POSTAC_MASTER_BUILD_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+      POSTAC_MASTER_BUILD_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
 
     steps:
       - name: Checkout
@@ -138,6 +141,10 @@ jobs:
           cp "$apk_path" dist/portrait-lab-market-arm64-v8a-debug.apk
           sha256sum dist/portrait-lab-market-arm64-v8a-debug.apk \
             > dist/portrait-lab-market-arm64-v8a-debug.apk.sha256
+          printf '%s\n' \
+            "branch=${POSTAC_MASTER_BUILD_BRANCH}" \
+            "commit=${POSTAC_MASTER_BUILD_COMMIT}" \
+            > dist/postac-master-build-provenance.txt
           ls -lh dist
 
       - name: Upload ARM64 Market debug APK
@@ -150,6 +157,7 @@ jobs:
           path: |
             dist/portrait-lab-market-arm64-v8a-debug.apk
             dist/portrait-lab-market-arm64-v8a-debug.apk.sha256
+            dist/postac-master-build-provenance.txt
 
       - name: Upload CI diagnostics
         if: always()
