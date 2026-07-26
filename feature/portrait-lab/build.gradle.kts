@@ -12,7 +12,24 @@ plugins {
     alias(libs.plugins.image.toolbox.compose)
 }
 
-android.namespace = "com.t8rin.imagetoolbox.feature.portrait_lab"
+android {
+    namespace = "com.t8rin.imagetoolbox.feature.portrait_lab"
+    buildFeatures.buildConfig = true
+    defaultConfig {
+        val postacBranch = System.getenv("POSTAC_MASTER_BUILD_BRANCH") ?: "LOCAL_OR_UNKNOWN"
+        val postacCommit = System.getenv("POSTAC_MASTER_BUILD_COMMIT") ?: "LOCAL_OR_UNKNOWN"
+        buildConfigField(
+            "String",
+            "POSTAC_MASTER_BUILD_BRANCH",
+            "\"${postacBranch.replace("\\", "\\\\").replace("\"", "\\\"")}\""
+        )
+        buildConfigField(
+            "String",
+            "POSTAC_MASTER_BUILD_COMMIT",
+            "\"${postacCommit.replace("\\", "\\\\").replace("\"", "\\\"")}\""
+        )
+    }
+}
 
 dependencies {
     implementation(projects.lib.portraitAnalysis)
