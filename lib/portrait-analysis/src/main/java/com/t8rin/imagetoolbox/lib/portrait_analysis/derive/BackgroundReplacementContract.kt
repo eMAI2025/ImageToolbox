@@ -14,7 +14,8 @@ package com.t8rin.imagetoolbox.lib.portrait_analysis.derive
  * The contract consumes only an already accepted foreground alpha matte. It does not allocate a
  * bitmap, decode a replacement image, resample pixels, composite layers or connect to runtime UI.
  * A blocked or provenance-inconsistent foreground request cannot be promoted into a replacement
- * operation.
+ * operation. Background and foreground dimensions must already match; no implicit resize, crop or
+ * fit policy is permitted at this layer.
  */
 object BackgroundReplacementContract {
 
@@ -31,6 +32,7 @@ object BackgroundReplacementContract {
         FOREGROUND_DIMENSIONS_INVALID,
         BACKGROUND_SOURCE_MISSING,
         BACKGROUND_DIMENSIONS_INVALID,
+        BACKGROUND_FOREGROUND_DIMENSIONS_MISMATCH,
         ORIENTATION_NOT_APPLIED,
         PROVENANCE_MISSING,
         PROVENANCE_MISMATCH
@@ -103,6 +105,12 @@ object BackgroundReplacementContract {
         } else {
             if (backgroundSource.width <= 0 || backgroundSource.height <= 0) {
                 blockers += Blocker.BACKGROUND_DIMENSIONS_INVALID
+            }
+            if (
+                matte != null &&
+                (backgroundSource.width != matte.width || backgroundSource.height != matte.height)
+            ) {
+                blockers += Blocker.BACKGROUND_FOREGROUND_DIMENSIONS_MISMATCH
             }
             if (
                 backgroundSource is BackgroundSource.RasterReference &&
