@@ -38,10 +38,23 @@ class PostacMasterPipelineUnlockContractTest {
     }
 
     @Test
+    fun `green boolean cannot substitute current module contract fingerprint`() {
+        val decision = PostacMasterPipelineUnlockContract.evaluate(
+            validEvidence().copy(moduleContractFingerprint = "obsolete-contract")
+        )
+
+        assertEquals(PostacMasterPipelineUnlockContract.Status.LOCKED, decision.status)
+        assertNull(decision.capability)
+        assertTrue(
+            PostacMasterPipelineUnlockContract.Blocker.MODULE_CONTRACT_FINGERPRINT_MISMATCH in
+                decision.blockers
+        )
+    }
+
+    @Test
     fun `background replacement requires background removal capability first`() {
         val decision = PostacMasterPipelineUnlockContract.evaluate(
-            validEvidence().copy(
-                module = PostacMasterPipelineUnlockContract.Module.BACKGROUND_REPLACEMENT,
+            validEvidence(PostacMasterPipelineUnlockContract.Module.BACKGROUND_REPLACEMENT).copy(
                 upstreamCapabilities = emptySet()
             )
         )
@@ -53,8 +66,7 @@ class PostacMasterPipelineUnlockContractTest {
     @Test
     fun `upstream capability from another source lineage cannot unlock downstream module`() {
         val decision = PostacMasterPipelineUnlockContract.evaluate(
-            validEvidence().copy(
-                module = PostacMasterPipelineUnlockContract.Module.BACKGROUND_REPLACEMENT,
+            validEvidence(PostacMasterPipelineUnlockContract.Module.BACKGROUND_REPLACEMENT).copy(
                 upstreamCapabilities = setOf(
                     upstream(
                         PostacMasterPipelineUnlockContract.Module.BACKGROUND_REMOVAL,
@@ -66,6 +78,26 @@ class PostacMasterPipelineUnlockContractTest {
 
         assertEquals(PostacMasterPipelineUnlockContract.Status.LOCKED, decision.status)
         assertTrue(PostacMasterPipelineUnlockContract.Blocker.UPSTREAM_PROVENANCE_MISMATCH in decision.blockers)
+    }
+
+    @Test
+    fun `upstream green boolean with stale contract fingerprint remains locked`() {
+        val decision = PostacMasterPipelineUnlockContract.evaluate(
+            validEvidence(PostacMasterPipelineUnlockContract.Module.BACKGROUND_REPLACEMENT).copy(
+                upstreamCapabilities = setOf(
+                    upstream(
+                        PostacMasterPipelineUnlockContract.Module.BACKGROUND_REMOVAL,
+                        contractFingerprint = "obsolete-background-removal-contract"
+                    )
+                )
+            )
+        )
+
+        assertEquals(PostacMasterPipelineUnlockContract.Status.LOCKED, decision.status)
+        assertTrue(
+            PostacMasterPipelineUnlockContract.Blocker.UPSTREAM_CONTRACT_FINGERPRINT_MISMATCH in
+                decision.blockers
+        )
     }
 
     @Test
@@ -85,8 +117,7 @@ class PostacMasterPipelineUnlockContractTest {
     @Test
     fun `matching green upstream capability unlocks only declared downstream module`() {
         val decision = PostacMasterPipelineUnlockContract.evaluate(
-            validEvidence().copy(
-                module = PostacMasterPipelineUnlockContract.Module.BACKGROUND_REPLACEMENT,
+            validEvidence(PostacMasterPipelineUnlockContract.Module.BACKGROUND_REPLACEMENT).copy(
                 upstreamCapabilities = setOf(
                     upstream(PostacMasterPipelineUnlockContract.Module.BACKGROUND_REMOVAL)
                 )
@@ -127,18 +158,24 @@ class PostacMasterPipelineUnlockContractTest {
         assertTrue(decision.blockers.isEmpty())
         val capability = requireNotNull(decision.capability)
         assertEquals(evidence.module, capability.module)
+        assertEquals(evidence.moduleContractFingerprint, capability.moduleContractFingerprint)
         assertEquals("feature/test", capability.provenanceBranch)
         assertEquals("abc123", capability.provenanceCommit)
     }
 
-    private fun validEvidence() = PostacMasterPipelineUnlockContract.Evidence(
-        module = PostacMasterPipelineUnlockContract.Module.BACKGROUND_REMOVAL,
+    private fun validEvidence(
+        module: PostacMasterPipelineUnlockContract.Module =
+            PostacMasterPipelineUnlockContract.Module.BACKGROUND_REMOVAL
+    ) = PostacMasterPipelineUnlockContract.Evidence(
+        module = module,
         a1DevicePass = true,
         iteration32Accepted = true,
         rawEvidencePresent = true,
         filteredEvidencePresent = true,
         acceptedEvidencePresent = true,
         moduleContractCiGreen = true,
+        moduleContractFingerprint =
+            PostacMasterPipelineUnlockContract.expectedContractFingerprint(module),
         upstreamCapabilities = emptySet(),
         provenanceBranch = "feature/test",
         provenanceCommit = "abc123",
@@ -148,10 +185,13 @@ class PostacMasterPipelineUnlockContractTest {
 
     private fun upstream(
         module: PostacMasterPipelineUnlockContract.Module,
-        commit: String = "abc123"
+        commit: String = "abc123",
+        contractFingerprint: String =
+            PostacMasterPipelineUnlockContract.expectedContractFingerprint(module)
     ) = PostacMasterPipelineUnlockContract.UpstreamCapabilityEvidence(
         module = module,
         contractCiGreen = true,
+        contractFingerprint = contractFingerprint,
         provenanceBranch = "feature/test",
         provenanceCommit = commit
     )
