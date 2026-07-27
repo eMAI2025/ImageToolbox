@@ -16,7 +16,7 @@ package com.t8rin.imagetoolbox.lib.portrait_analysis.derive
  */
 object PostacMasterPipelineUnlockContract {
 
-    const val FINGERPRINT = "POSTAC_MASTER_PIPELINE_UNLOCK_CONTRACT_V2"
+    const val FINGERPRINT = "POSTAC_MASTER_PIPELINE_UNLOCK_CONTRACT_V3"
 
     enum class Module {
         BACKGROUND_REMOVAL,
@@ -40,9 +40,11 @@ object PostacMasterPipelineUnlockContract {
         PROVENANCE_MISSING,
         PROVENANCE_MISMATCH,
         MODULE_CONTRACT_NOT_GREEN,
+        MODULE_CONTRACT_FINGERPRINT_MISMATCH,
         UPSTREAM_MODULE_NOT_READY,
         UPSTREAM_PROVENANCE_MISSING,
         UPSTREAM_PROVENANCE_MISMATCH,
+        UPSTREAM_CONTRACT_FINGERPRINT_MISMATCH,
         UNDECLARED_UPSTREAM_CAPABILITY,
         PRODUCTION_ACTIVATION_REQUESTED,
         FINAL_UI_REQUESTED,
@@ -52,11 +54,12 @@ object PostacMasterPipelineUnlockContract {
 
     /**
      * Static proof that an upstream module passed its own contract on the same evidence lineage.
-     * A bare module enum is insufficient because it cannot prove branch/commit provenance.
+     * A bare module enum or green boolean is insufficient without its exact contract fingerprint.
      */
     data class UpstreamCapabilityEvidence(
         val module: Module,
         val contractCiGreen: Boolean,
+        val contractFingerprint: String,
         val provenanceBranch: String,
         val provenanceCommit: String
     )
@@ -69,6 +72,7 @@ object PostacMasterPipelineUnlockContract {
         val filteredEvidencePresent: Boolean,
         val acceptedEvidencePresent: Boolean,
         val moduleContractCiGreen: Boolean,
+        val moduleContractFingerprint: String,
         val upstreamCapabilities: Set<UpstreamCapabilityEvidence>,
         val provenanceBranch: String,
         val provenanceCommit: String,
@@ -82,6 +86,7 @@ object PostacMasterPipelineUnlockContract {
 
     data class Capability internal constructor(
         val module: Module,
+        val moduleContractFingerprint: String,
         val provenanceBranch: String,
         val provenanceCommit: String,
         val fingerprint: String = FINGERPRINT
@@ -114,6 +119,9 @@ object PostacMasterPipelineUnlockContract {
         if (!evidence.filteredEvidencePresent) blockers += Blocker.FILTERED_EVIDENCE_MISSING
         if (!evidence.acceptedEvidencePresent) blockers += Blocker.ACCEPTED_EVIDENCE_MISSING
         if (!evidence.moduleContractCiGreen) blockers += Blocker.MODULE_CONTRACT_NOT_GREEN
+        if (evidence.moduleContractFingerprint != expectedContractFingerprint(evidence.module)) {
+            blockers += Blocker.MODULE_CONTRACT_FINGERPRINT_MISMATCH
+        }
         if (
             evidence.provenanceBranch.isBlank() || evidence.provenanceCommit.isBlank() ||
             evidence.expectedBranch.isBlank() || evidence.expectedCommit.isBlank()
@@ -140,6 +148,9 @@ object PostacMasterPipelineUnlockContract {
                 blockers += Blocker.UPSTREAM_MODULE_NOT_READY
             }
             candidates.forEach { capability ->
+                if (capability.contractFingerprint != expectedContractFingerprint(module)) {
+                    blockers += Blocker.UPSTREAM_CONTRACT_FINGERPRINT_MISMATCH
+                }
                 if (
                     capability.provenanceBranch.isBlank() ||
                     capability.provenanceCommit.isBlank()
@@ -166,6 +177,7 @@ object PostacMasterPipelineUnlockContract {
         val capability = if (blockers.isEmpty()) {
             Capability(
                 module = evidence.module,
+                moduleContractFingerprint = evidence.moduleContractFingerprint,
                 provenanceBranch = evidence.provenanceBranch,
                 provenanceCommit = evidence.provenanceCommit
             )
@@ -177,6 +189,14 @@ object PostacMasterPipelineUnlockContract {
             blockers = blockers,
             capability = capability
         )
+    }
+
+    fun expectedContractFingerprint(module: Module): String = when (module) {
+        Module.BACKGROUND_REMOVAL -> BackgroundRemovalContract.FINGERPRINT
+        Module.BACKGROUND_REPLACEMENT -> BackgroundReplacementContract.FINGERPRINT
+        Module.CLOTHING_CHANGE -> ClothingChangeContract.FINGERPRINT
+        Module.SILHOUETTE_EDIT -> SilhouetteEditContract.FINGERPRINT
+        Module.PORTRAIT_FILTERS -> PortraitFilterContract.FINGERPRINT
     }
 
     fun requiredUpstream(module: Module): Set<Module> = when (module) {
