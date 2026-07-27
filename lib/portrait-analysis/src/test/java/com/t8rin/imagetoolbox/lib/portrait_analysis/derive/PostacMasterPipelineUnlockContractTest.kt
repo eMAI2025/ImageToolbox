@@ -129,6 +129,52 @@ class PostacMasterPipelineUnlockContractTest {
     }
 
     @Test
+    fun `downstream capability preserves exact upstream contract lineage`() {
+        val module = PostacMasterPipelineUnlockContract.Module.BACKGROUND_REPLACEMENT
+        val upstreamModule = PostacMasterPipelineUnlockContract.Module.BACKGROUND_REMOVAL
+        val decision = PostacMasterPipelineUnlockContract.evaluate(
+            validEvidence(module).copy(
+                upstreamCapabilities = setOf(upstream(upstreamModule))
+            )
+        )
+
+        val capability = requireNotNull(decision.capability)
+        assertEquals(
+            mapOf(
+                upstreamModule to
+                    PostacMasterPipelineUnlockContract.expectedContractFingerprint(upstreamModule)
+            ),
+            capability.upstreamContractFingerprints
+        )
+        assertEquals(PostacMasterPipelineUnlockContract.FINGERPRINT, capability.fingerprint)
+    }
+
+    @Test
+    fun `root capabilities contain an explicit empty upstream lineage`() {
+        val capability = requireNotNull(
+            PostacMasterPipelineUnlockContract.evaluate(validEvidence()).capability
+        )
+
+        assertTrue(capability.upstreamContractFingerprints.isEmpty())
+    }
+
+    @Test
+    fun `static dependency graph is complete acyclic and self dependency free`() {
+        val assessment = PostacMasterPipelineUnlockContract.dependencyGraphAssessment()
+
+        assertTrue(assessment.valid)
+        assertTrue(assessment.cyclicModules.isEmpty())
+        assertTrue(assessment.selfDependentModules.isEmpty())
+        assertTrue(assessment.unknownDependencyModules.isEmpty())
+        assertEquals(
+            PostacMasterPipelineUnlockContract.Module.entries.toSet(),
+            PostacMasterPipelineUnlockContract.Module.entries
+                .associateWith(PostacMasterPipelineUnlockContract::requiredUpstream)
+                .keys
+        )
+    }
+
+    @Test
     fun `production activation and deformation cannot be smuggled into capability`() {
         val decision = PostacMasterPipelineUnlockContract.evaluate(
             validEvidence().copy(requestsProductionActivation = true, requestsDeformation = true)
