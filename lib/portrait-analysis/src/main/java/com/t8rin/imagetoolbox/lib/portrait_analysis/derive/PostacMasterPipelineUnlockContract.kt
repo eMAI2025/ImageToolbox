@@ -16,7 +16,7 @@ package com.t8rin.imagetoolbox.lib.portrait_analysis.derive
  */
 object PostacMasterPipelineUnlockContract {
 
-    const val FINGERPRINT = "POSTAC_MASTER_PIPELINE_UNLOCK_CONTRACT_V1"
+    const val FINGERPRINT = "POSTAC_MASTER_PIPELINE_UNLOCK_CONTRACT_V2"
 
     enum class Module {
         BACKGROUND_REMOVAL,
@@ -41,11 +41,25 @@ object PostacMasterPipelineUnlockContract {
         PROVENANCE_MISMATCH,
         MODULE_CONTRACT_NOT_GREEN,
         UPSTREAM_MODULE_NOT_READY,
+        UPSTREAM_PROVENANCE_MISSING,
+        UPSTREAM_PROVENANCE_MISMATCH,
+        UNDECLARED_UPSTREAM_CAPABILITY,
         PRODUCTION_ACTIVATION_REQUESTED,
         FINAL_UI_REQUESTED,
         DEFORMATION_REQUESTED,
         CONTENT_GENERATION_REQUESTED
     }
+
+    /**
+     * Static proof that an upstream module passed its own contract on the same evidence lineage.
+     * A bare module enum is insufficient because it cannot prove branch/commit provenance.
+     */
+    data class UpstreamCapabilityEvidence(
+        val module: Module,
+        val contractCiGreen: Boolean,
+        val provenanceBranch: String,
+        val provenanceCommit: String
+    )
 
     data class Evidence(
         val module: Module,
@@ -55,7 +69,7 @@ object PostacMasterPipelineUnlockContract {
         val filteredEvidencePresent: Boolean,
         val acceptedEvidencePresent: Boolean,
         val moduleContractCiGreen: Boolean,
-        val upstreamReadyModules: Set<Module>,
+        val upstreamCapabilities: Set<UpstreamCapabilityEvidence>,
         val provenanceBranch: String,
         val provenanceCommit: String,
         val expectedBranch: String,
@@ -111,9 +125,35 @@ object PostacMasterPipelineUnlockContract {
         ) {
             blockers += Blocker.PROVENANCE_MISMATCH
         }
-        if (!evidence.upstreamReadyModules.containsAll(requiredUpstream(evidence.module))) {
+
+        val requiredUpstream = requiredUpstream(evidence.module)
+        val capabilitiesByModule = evidence.upstreamCapabilities.groupBy { it.module }
+        if (!capabilitiesByModule.keys.containsAll(requiredUpstream)) {
             blockers += Blocker.UPSTREAM_MODULE_NOT_READY
         }
+        if (evidence.upstreamCapabilities.any { it.module !in requiredUpstream }) {
+            blockers += Blocker.UNDECLARED_UPSTREAM_CAPABILITY
+        }
+        requiredUpstream.forEach { module ->
+            val candidates = capabilitiesByModule[module].orEmpty()
+            if (candidates.size != 1 || candidates.none { it.contractCiGreen }) {
+                blockers += Blocker.UPSTREAM_MODULE_NOT_READY
+            }
+            candidates.forEach { capability ->
+                if (
+                    capability.provenanceBranch.isBlank() ||
+                    capability.provenanceCommit.isBlank()
+                ) {
+                    blockers += Blocker.UPSTREAM_PROVENANCE_MISSING
+                } else if (
+                    capability.provenanceBranch != evidence.provenanceBranch ||
+                    capability.provenanceCommit != evidence.provenanceCommit
+                ) {
+                    blockers += Blocker.UPSTREAM_PROVENANCE_MISMATCH
+                }
+            }
+        }
+
         if (evidence.requestsProductionActivation) {
             blockers += Blocker.PRODUCTION_ACTIVATION_REQUESTED
         }
