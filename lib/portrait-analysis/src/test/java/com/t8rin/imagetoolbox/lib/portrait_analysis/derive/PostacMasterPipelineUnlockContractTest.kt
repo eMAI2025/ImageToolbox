@@ -23,12 +23,8 @@ class PostacMasterPipelineUnlockContractTest {
 
         assertEquals(PostacMasterPipelineUnlockContract.Status.LOCKED, decision.status)
         assertNull(decision.capability)
-        assertTrue(
-            PostacMasterPipelineUnlockContract.Blocker.A1_DEVICE_PASS_MISSING in decision.blockers
-        )
-        assertTrue(
-            PostacMasterPipelineUnlockContract.Blocker.ITERATION_32_NOT_ACCEPTED in decision.blockers
-        )
+        assertTrue(PostacMasterPipelineUnlockContract.Blocker.A1_DEVICE_PASS_MISSING in decision.blockers)
+        assertTrue(PostacMasterPipelineUnlockContract.Blocker.ITERATION_32_NOT_ACCEPTED in decision.blockers)
     }
 
     @Test
@@ -38,10 +34,7 @@ class PostacMasterPipelineUnlockContractTest {
         )
 
         assertEquals(PostacMasterPipelineUnlockContract.Status.LOCKED, decision.status)
-        assertTrue(
-            PostacMasterPipelineUnlockContract.Blocker.FILTERED_EVIDENCE_MISSING in
-                decision.blockers
-        )
+        assertTrue(PostacMasterPipelineUnlockContract.Blocker.FILTERED_EVIDENCE_MISSING in decision.blockers)
     }
 
     @Test
@@ -49,34 +42,70 @@ class PostacMasterPipelineUnlockContractTest {
         val decision = PostacMasterPipelineUnlockContract.evaluate(
             validEvidence().copy(
                 module = PostacMasterPipelineUnlockContract.Module.BACKGROUND_REPLACEMENT,
-                upstreamReadyModules = emptySet()
+                upstreamCapabilities = emptySet()
             )
         )
 
         assertEquals(PostacMasterPipelineUnlockContract.Status.LOCKED, decision.status)
-        assertTrue(
-            PostacMasterPipelineUnlockContract.Blocker.UPSTREAM_MODULE_NOT_READY in
-                decision.blockers
+        assertTrue(PostacMasterPipelineUnlockContract.Blocker.UPSTREAM_MODULE_NOT_READY in decision.blockers)
+    }
+
+    @Test
+    fun `upstream capability from another source lineage cannot unlock downstream module`() {
+        val decision = PostacMasterPipelineUnlockContract.evaluate(
+            validEvidence().copy(
+                module = PostacMasterPipelineUnlockContract.Module.BACKGROUND_REPLACEMENT,
+                upstreamCapabilities = setOf(
+                    upstream(
+                        PostacMasterPipelineUnlockContract.Module.BACKGROUND_REMOVAL,
+                        commit = "stale"
+                    )
+                )
+            )
         )
+
+        assertEquals(PostacMasterPipelineUnlockContract.Status.LOCKED, decision.status)
+        assertTrue(PostacMasterPipelineUnlockContract.Blocker.UPSTREAM_PROVENANCE_MISMATCH in decision.blockers)
+    }
+
+    @Test
+    fun `undeclared upstream capability cannot be smuggled into dependency proof`() {
+        val decision = PostacMasterPipelineUnlockContract.evaluate(
+            validEvidence().copy(
+                upstreamCapabilities = setOf(
+                    upstream(PostacMasterPipelineUnlockContract.Module.PORTRAIT_FILTERS)
+                )
+            )
+        )
+
+        assertEquals(PostacMasterPipelineUnlockContract.Status.LOCKED, decision.status)
+        assertTrue(PostacMasterPipelineUnlockContract.Blocker.UNDECLARED_UPSTREAM_CAPABILITY in decision.blockers)
+    }
+
+    @Test
+    fun `matching green upstream capability unlocks only declared downstream module`() {
+        val decision = PostacMasterPipelineUnlockContract.evaluate(
+            validEvidence().copy(
+                module = PostacMasterPipelineUnlockContract.Module.BACKGROUND_REPLACEMENT,
+                upstreamCapabilities = setOf(
+                    upstream(PostacMasterPipelineUnlockContract.Module.BACKGROUND_REMOVAL)
+                )
+            )
+        )
+
+        assertEquals(PostacMasterPipelineUnlockContract.Status.READY_FOR_ISOLATED_ADAPTER, decision.status)
+        assertTrue(decision.blockers.isEmpty())
     }
 
     @Test
     fun `production activation and deformation cannot be smuggled into capability`() {
         val decision = PostacMasterPipelineUnlockContract.evaluate(
-            validEvidence().copy(
-                requestsProductionActivation = true,
-                requestsDeformation = true
-            )
+            validEvidence().copy(requestsProductionActivation = true, requestsDeformation = true)
         )
 
         assertEquals(PostacMasterPipelineUnlockContract.Status.LOCKED, decision.status)
-        assertTrue(
-            PostacMasterPipelineUnlockContract.Blocker.PRODUCTION_ACTIVATION_REQUESTED in
-                decision.blockers
-        )
-        assertTrue(
-            PostacMasterPipelineUnlockContract.Blocker.DEFORMATION_REQUESTED in decision.blockers
-        )
+        assertTrue(PostacMasterPipelineUnlockContract.Blocker.PRODUCTION_ACTIVATION_REQUESTED in decision.blockers)
+        assertTrue(PostacMasterPipelineUnlockContract.Blocker.DEFORMATION_REQUESTED in decision.blockers)
     }
 
     @Test
@@ -86,9 +115,7 @@ class PostacMasterPipelineUnlockContractTest {
         )
 
         assertEquals(PostacMasterPipelineUnlockContract.Status.LOCKED, decision.status)
-        assertTrue(
-            PostacMasterPipelineUnlockContract.Blocker.PROVENANCE_MISMATCH in decision.blockers
-        )
+        assertTrue(PostacMasterPipelineUnlockContract.Blocker.PROVENANCE_MISMATCH in decision.blockers)
     }
 
     @Test
@@ -96,10 +123,7 @@ class PostacMasterPipelineUnlockContractTest {
         val evidence = validEvidence()
         val decision = PostacMasterPipelineUnlockContract.evaluate(evidence)
 
-        assertEquals(
-            PostacMasterPipelineUnlockContract.Status.READY_FOR_ISOLATED_ADAPTER,
-            decision.status
-        )
+        assertEquals(PostacMasterPipelineUnlockContract.Status.READY_FOR_ISOLATED_ADAPTER, decision.status)
         assertTrue(decision.blockers.isEmpty())
         val capability = requireNotNull(decision.capability)
         assertEquals(evidence.module, capability.module)
@@ -115,10 +139,20 @@ class PostacMasterPipelineUnlockContractTest {
         filteredEvidencePresent = true,
         acceptedEvidencePresent = true,
         moduleContractCiGreen = true,
-        upstreamReadyModules = emptySet(),
+        upstreamCapabilities = emptySet(),
         provenanceBranch = "feature/test",
         provenanceCommit = "abc123",
         expectedBranch = "feature/test",
         expectedCommit = "abc123"
+    )
+
+    private fun upstream(
+        module: PostacMasterPipelineUnlockContract.Module,
+        commit: String = "abc123"
+    ) = PostacMasterPipelineUnlockContract.UpstreamCapabilityEvidence(
+        module = module,
+        contractCiGreen = true,
+        provenanceBranch = "feature/test",
+        provenanceCommit = commit
     )
 }
