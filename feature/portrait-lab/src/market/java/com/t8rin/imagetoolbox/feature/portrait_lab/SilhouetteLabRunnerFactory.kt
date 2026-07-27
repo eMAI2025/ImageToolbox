@@ -15,6 +15,12 @@ import android.graphics.Matrix
 import android.media.ExifInterface
 import android.net.Uri
 import com.t8rin.imagetoolbox.lib.portrait_analysis.catalog.PortraitRegionId
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodyLandmarkVisibilityGate
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodyLimbCapabilityGate
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodyMaskComponentExtractor
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodyMaskComponentGate
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodyMaskPoseConsistencyGate
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodyMaskPoseRuntimeFilter
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodyPoseSkeletonEnricher
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodySilhouetteEnricher
 import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodySilhouetteSectionValidator
@@ -32,14 +38,17 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 private const val SILHOUETTE_MAX_PREVIEW_DIMENSION = 1600
-private const val POSTAC_MASTER_BUILD_BRANCH = "fix/postac-master-b1-torso-occlusion-validation"
-private const val POSTAC_MASTER_BUILD_SOURCE_COMMIT = "bbe46e109b5631fb49f2d653b52d7a604622246c"
-private const val POSTAC_MASTER_BUILD_FINGERPRINT_VERSION = "POSTAC_MASTER_DIAGNOSTICS_V1"
+private const val POSTAC_MASTER_BUILD_FINGERPRINT_VERSION =
+    "POSTAC_MASTER_DIAGNOSTICS_V2_DEVICE_REMEDIATION"
 private val POSTAC_MASTER_ACTIVE_FIXES = listOf(
     "B1_LOCAL_LIMB_SECTION_VALIDATION",
     "B1_TORSO_CORRIDOR_VALIDATION",
     "B1_TORSO_LIMB_OCCLUSION_VALIDATION",
-    "B1_SEMANTIC_REJECTION_REASONS"
+    "B1_SEMANTIC_REJECTION_REASONS",
+    "BODY_LANDMARK_VISIBILITY_GATE",
+    "BODY_LIMB_CAPABILITY_GATE",
+    "BODY_MASK_COMPONENT_RUNTIME_EXTRACTION",
+    "BODY_MASK_POSE_RUNTIME_FILTER"
 )
 
 private val TORSO_SECTION_IDS = setOf(
@@ -92,28 +101,66 @@ private class MarketSilhouetteLabRunner(
                 )
             }
 
-            val withSkeleton = BodyPoseSkeletonEnricher.enrich(merged)
-            val rawEnrichment = BodySilhouetteEnricher.enrich(withSkeleton)
+            val rawObservation = BodyPoseSkeletonEnricher.enrich(merged)
+            val bodyVisibility = BodyLandmarkVisibilityGate.evaluate(rawObservation)
+            val limbCapabilities = BodyLimbCapabilityGate.evaluate(rawObservation, bodyVisibility)
+            val visibilityFiltered = BodyLandmarkVisibilityGate.filterForActiveGeometry(
+                rawObservation = rawObservation,
+                assessment = bodyVisibility
+            )
+            val maskExtraction = BodyMaskComponentExtractor.extract(
+                observation = rawObservation,
+                visibility = bodyVisibility
+            )
+            val maskComponents = maskExtraction?.assessment
+                ?: BodyMaskComponentGate.Assessment.empty()
+            val maskFilteredObservation = maskExtraction?.applyTo(visibilityFiltered)
+                ?: visibilityFiltered.copy(
+                    masks = visibilityFiltered.masks - PortraitRegionId.SUBJECT_MASK,
+                    regions = visibilityFiltered.regions - PortraitRegionId.SUBJECT_MASK
+                )
+            val maskPoseConsistency = BodyMaskPoseConsistencyGate.evaluate(
+                observation = rawObservation,
+                visibility = bodyVisibility,
+                maskComponents = maskComponents
+            )
+            val acceptedPoseInput = BodyMaskPoseRuntimeFilter.filterPoseInput(
+                observation = maskFilteredObservation,
+                assessment = maskPoseConsistency
+            )
+
+            // Raw enrichment is retained only for before/after diagnostics; it never reaches overlay.
+            val diagnosticRawEnrichment = BodySilhouetteEnricher.enrich(rawObservation)
+            val acceptedCandidateEnrichment = BodySilhouetteEnricher.enrich(acceptedPoseInput)
             val sectionValidation = BodySilhouetteSectionValidator.validate(
-                enrichment = rawEnrichment,
+                enrichment = acceptedCandidateEnrichment,
                 sourceWidth = decoded.metadata.orientedWidth,
                 sourceHeight = decoded.metadata.orientedHeight
             )
             val torsoValidation = BodyTorsoSectionValidator.validate(sectionValidation.enrichment)
-            val enrichment = torsoValidation.enrichment
+            val enrichment = BodyMaskPoseRuntimeFilter.filterEnrichment(
+                enrichment = torsoValidation.enrichment,
+                assessment = maskPoseConsistency
+            )
             val observation = enrichment.observation
-            val capabilities = bodyRegionCapabilities(observation, enrichment)
+            val capabilities = bodyRegionCapabilities(
+                observation = observation,
+                enrichment = enrichment,
+                maskPoseConsistency = maskPoseConsistency
+            )
             val availableCount = capabilities.count { it.available }
             val poseLandmarkCount = observation.landmarks.values.count {
                 it.backend == ObservationBackend.ML_KIT_POSE
             }
-            val rawLimbCount = rawEnrichment.observation.contours.keys.count(::isLimbSection)
+            val rawLimbCount = diagnosticRawEnrichment.observation.contours.keys.count(::isLimbSection)
             val filteredLimbCount = observation.contours.keys.count(::isLimbSection)
-            val rawTorsoCount = rawEnrichment.observation.contours.keys.count { it in TORSO_SECTION_IDS }
+            val rawTorsoCount = diagnosticRawEnrichment.observation.contours.keys.count {
+                it in TORSO_SECTION_IDS
+            }
             val filteredTorsoCount = observation.contours.keys.count { it in TORSO_SECTION_IDS }
+            val validPrimaryMask = maskExtraction != null && maskComponents.primaryComponentId != null
             val status = when {
-                observation.bodyCount != 1 ||
-                    PortraitRegionId.SUBJECT_MASK !in observation.masks -> SilhouetteVisualStatus.FAILED
+                observation.bodyCount != 1 || !validPrimaryMask -> SilhouetteVisualStatus.FAILED
                 availableCount == capabilities.size -> SilhouetteVisualStatus.PASS
                 availableCount > 0 -> SilhouetteVisualStatus.PARTIAL
                 else -> SilhouetteVisualStatus.FAILED
@@ -121,8 +168,8 @@ private class MarketSilhouetteLabRunner(
             val runtimeLog = buildList {
                 add("mode=B1_SILHOUETTE_OBSERVATION")
                 add("diagnostic_schema=$POSTAC_MASTER_BUILD_FINGERPRINT_VERSION")
-                add("build_branch=$POSTAC_MASTER_BUILD_BRANCH")
-                add("build_source_commit=$POSTAC_MASTER_BUILD_SOURCE_COMMIT")
+                add("build_branch=${BuildConfig.POSTAC_MASTER_BUILD_BRANCH}")
+                add("build_source_commit=${BuildConfig.POSTAC_MASTER_BUILD_COMMIT}")
                 add("build_active_fixes=${POSTAC_MASTER_ACTIVE_FIXES.joinToString(",")}")
                 add("backend_pose=ML_KIT_POSE")
                 add("backend_mask=ML_KIT_SELFIE_SEGMENTATION")
@@ -134,7 +181,25 @@ private class MarketSilhouetteLabRunner(
                 add("subject_count=${observation.subjectCount}")
                 add("body_count=${observation.bodyCount}")
                 add("pose_landmark_count=$poseLandmarkCount")
-                add("mask_count=${observation.masks.size}")
+                add("raw_mask_count=${rawObservation.masks.size}")
+                add("active_mask_count=${observation.masks.size}")
+                add("body_visibility_fingerprint=${bodyVisibility.fingerprint}")
+                add("body_visibility_visible_count=${bodyVisibility.visibleCount}")
+                add("body_visibility_low_confidence_count=${bodyVisibility.lowConfidenceCount}")
+                add("body_visibility_off_frame_count=${bodyVisibility.offFrameCount}")
+                add("body_visibility_missing_count=${bodyVisibility.missingCount}")
+                add("limb_capability_fingerprint=${limbCapabilities.fingerprint}")
+                add("mask_component_extractor_fingerprint=${maskExtraction?.fingerprint ?: "MISSING"}")
+                add("mask_component_gate_fingerprint=${maskComponents.fingerprint}")
+                add("mask_component_raw_count=${maskComponents.rawComponents.size}")
+                add("mask_component_filtered_count=${maskComponents.filteredComponents.size}")
+                add("mask_component_primary_id=${maskComponents.primaryComponentId.orEmpty()}")
+                add("mask_component_accepted_pixels=${maskExtraction?.acceptedPixelCount ?: 0}")
+                add("mask_pose_consistency_fingerprint=${maskPoseConsistency.fingerprint}")
+                add(
+                    "mask_pose_accepted_regions=" +
+                        maskPoseConsistency.acceptedRegionIds.sorted().joinToString(",")
+                )
                 add("derived_region_count=${enrichment.derivedRegionIds.size}")
                 add("limb_section_raw_count=$rawLimbCount")
                 add("limb_section_filtered_count=$filteredLimbCount")
@@ -145,6 +210,20 @@ private class MarketSilhouetteLabRunner(
                 add("local_section_rejection_count=${sectionValidation.rejectedSections.size}")
                 add("torso_section_rejection_count=${torsoValidation.rejectedSections.size}")
                 add("silhouette_status=${status.name}")
+                maskComponents.decisions.forEach { decision ->
+                    add(
+                        "mask_component=${decision.component.id},accepted=${decision.accepted}," +
+                            "pixels=${decision.component.pixelCount}," +
+                            "reasons=${decision.reasons.joinToString(",") { it.name }}"
+                    )
+                }
+                maskPoseConsistency.regions.values.forEach { region ->
+                    add(
+                        "mask_pose_region=${region.regionId},available=${region.available}," +
+                            "blocking_segments=${region.blockingSegmentIds.sorted().joinToString(",")}," +
+                            "reasons=${region.reasons.joinToString(",") { it.name }}"
+                    )
+                }
                 capabilities.forEach { capability ->
                     add(
                         "body_region=${capability.regionId},available=${capability.available}," +
@@ -188,8 +267,16 @@ private class MarketSilhouetteLabRunner(
             val warnings = buildList {
                 if (status != SilhouetteVisualStatus.PASS) {
                     add(
-                        "Only visible, mask-supported body regions are available. " +
-                            "Missing, cropped or non-local regions remain disabled; no anatomy is inferred."
+                        "Only visible, accepted-mask-supported body regions are available. " +
+                            "Missing, cropped or contradictory regions remain disabled; no anatomy is inferred."
+                    )
+                }
+                if (maskExtraction == null) {
+                    add("Subject-mask component evidence is missing; active mask geometry is disabled.")
+                } else if (maskComponents.rejectedComponents.isNotEmpty()) {
+                    add(
+                        "${maskComponents.rejectedComponents.size} disconnected or ambiguous mask " +
+                            "components were retained only in raw diagnostics."
                     )
                 }
                 if (sectionValidation.rejectedSections.isNotEmpty()) {
@@ -219,7 +306,12 @@ private class MarketSilhouetteLabRunner(
                     status = status,
                     regionCapabilities = capabilities,
                     runtimeLog = runtimeLog,
-                    warnings = warnings
+                    warnings = warnings,
+                    rawObservation = rawObservation,
+                    bodyVisibility = bodyVisibility,
+                    limbCapabilities = limbCapabilities,
+                    maskComponents = maskComponents,
+                    maskPoseConsistency = maskPoseConsistency
                 )
             )
         } catch (error: LinkageError) {
@@ -242,7 +334,8 @@ private class MarketSilhouetteLabRunner(
 
 private fun bodyRegionCapabilities(
     observation: com.t8rin.imagetoolbox.lib.portrait_analysis.model.SubjectObservation,
-    enrichment: com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodySilhouetteEnrichmentResult
+    enrichment: com.t8rin.imagetoolbox.lib.portrait_analysis.derive.BodySilhouetteEnrichmentResult,
+    maskPoseConsistency: BodyMaskPoseConsistencyGate.Assessment
 ): List<SilhouetteRegionCapability> {
     val regionIds = listOf(
         PortraitRegionId.SHOULDER_CONTOUR,
@@ -252,7 +345,9 @@ private fun bodyRegionCapabilities(
         PortraitRegionId.LEG_CONTOURS
     )
     return regionIds.map { regionId ->
-        val available = regionId in observation.regions && regionId in enrichment.derivedRegionIds
+        val consistency = maskPoseConsistency.regions[regionId]
+        val available = consistency?.available == true &&
+            regionId in observation.regions && regionId in enrichment.derivedRegionIds
         val relatedSkip = enrichment.skippedSections.firstOrNull { skipped ->
             when (regionId) {
                 PortraitRegionId.SHOULDER_CONTOUR -> skipped.sectionId.contains("shoulder")
@@ -265,10 +360,18 @@ private fun bodyRegionCapabilities(
                 else -> false
             }
         }
+        val consistencyReason = consistency
+            ?.takeUnless(BodyMaskPoseConsistencyGate.RegionDecision::available)
+            ?.reasons
+            ?.joinToString(",") { it.name }
         SilhouetteRegionCapability(
             regionId = regionId,
             available = available,
-            reason = if (available) null else relatedSkip?.reportedReason() ?: "NOT_DERIVED"
+            reason = if (available) {
+                null
+            } else {
+                consistencyReason ?: relatedSkip?.reportedReason() ?: "NOT_DERIVED"
+            }
         )
     }
 }

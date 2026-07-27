@@ -38,10 +38,17 @@ jobs:
     name: Portrait analysis tests
     runs-on: ubuntu-latest
     timeout-minutes: 80
+    env:
+      POSTAC_MASTER_BUILD_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+      POSTAC_MASTER_BUILD_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+      POSTAC_MASTER_BASE_COMMIT: ${{ github.event.pull_request.base.sha || github.event.before }}
 
     steps:
-      - name: Checkout
+      - name: Checkout exact source head
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
 
       - name: Set up JDK 21
         uses: actions/setup-java@v5
@@ -138,7 +145,41 @@ jobs:
           cp "$apk_path" dist/portrait-lab-market-arm64-v8a-debug.apk
           sha256sum dist/portrait-lab-market-arm64-v8a-debug.apk \
             > dist/portrait-lab-market-arm64-v8a-debug.apk.sha256
+          printf '%s\n' \
+            "branch=${POSTAC_MASTER_BUILD_BRANCH}" \
+            "commit=${POSTAC_MASTER_BUILD_COMMIT}" \
+            > dist/postac-master-build-provenance.txt
           ls -lh dist
+
+      - name: Prepare current POSTAC_MASTER source package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/source
+          git diff --name-only \
+            "${POSTAC_MASTER_BASE_COMMIT}...${POSTAC_MASTER_BUILD_COMMIT}" \
+            > dist/source/CHANGED_FILES.txt
+          while IFS= read -r path; do
+            [ -f "$path" ] || continue
+            mkdir -p "dist/source/$(dirname "$path")"
+            cp "$path" "dist/source/$path"
+          done < dist/source/CHANGED_FILES.txt
+          git diff \
+            "${POSTAC_MASTER_BASE_COMMIT}...${POSTAC_MASTER_BUILD_COMMIT}" \
+            > dist/source/CHANGES.diff
+          printf '%s\n' \
+            "repository=eMAI2025/ImageToolbox" \
+            "branch=${POSTAC_MASTER_BUILD_BRANCH}" \
+            "base_commit=${POSTAC_MASTER_BASE_COMMIT}" \
+            "head_commit=${POSTAC_MASTER_BUILD_COMMIT}" \
+            "scope=POSTAC_MASTER current draft changes; not the complete upstream repository" \
+            > dist/source/SOURCE_MANIFEST.txt
+          (
+            cd dist/source
+            zip -qr ../POSTAC_MASTER_CURRENT_SOURCE.zip .
+          )
+          sha256sum dist/POSTAC_MASTER_CURRENT_SOURCE.zip \
+            > dist/POSTAC_MASTER_CURRENT_SOURCE.zip.sha256
 
       - name: Upload ARM64 Market debug APK
         if: success()
@@ -150,6 +191,18 @@ jobs:
           path: |
             dist/portrait-lab-market-arm64-v8a-debug.apk
             dist/portrait-lab-market-arm64-v8a-debug.apk.sha256
+            dist/postac-master-build-provenance.txt
+
+      - name: Upload current POSTAC_MASTER source package
+        if: success()
+        uses: actions/upload-artifact@v6
+        with:
+          name: postac-master-current-source
+          if-no-files-found: error
+          compression-level: 0
+          path: |
+            dist/POSTAC_MASTER_CURRENT_SOURCE.zip
+            dist/POSTAC_MASTER_CURRENT_SOURCE.zip.sha256
 
       - name: Upload CI diagnostics
         if: always()

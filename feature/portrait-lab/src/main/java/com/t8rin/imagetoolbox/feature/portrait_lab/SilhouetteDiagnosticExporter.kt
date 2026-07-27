@@ -21,9 +21,13 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import com.t8rin.imagetoolbox.lib.portrait_analysis.derive.PostacMasterDiagnosticLayers
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ConfidenceMask
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ObservationBackend
+import com.t8rin.imagetoolbox.lib.portrait_analysis.model.SubjectObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.overlay.OverlayPolyline
+import com.t8rin.imagetoolbox.lib.portrait_analysis.overlay.PortraitOverlayScene
+import com.t8rin.imagetoolbox.lib.portrait_analysis.overlay.PortraitOverlaySceneBuilder
 import com.t8rin.imagetoolbox.lib.portrait_analysis.visual.ImageRenderTransform
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -53,19 +57,22 @@ suspend fun exportSilhouetteDiagnostics(
         val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"))
         val root = "silhouette_visual_proof_$timestamp"
         val target = context.createSilhouetteDiagnosticTarget("$root.zip")
+        val layers = output.toDiagnosticLayers()
         try {
             ZipOutputStream(target.output).use { zip ->
                 zip.putSilhouetteBitmap("$root/01_source_preview.png", output.previewBitmap)
                 zip.putSilhouetteBitmap(
-                    "$root/02_subject_mask.png",
-                    renderSilhouetteDiagnosticBitmap(
-                        output,
-                        SilhouetteOverlayVisibility(mask = true, pose = false, sections = false)
-                    ),
+                    "$root/${PostacMasterDiagnosticLayers.RAW_MASK_FILE}",
+                    renderMaskObservation(output, layers.raw),
                     recycleAfter = true
                 )
                 zip.putSilhouetteBitmap(
-                    "$root/03_pose.png",
+                    "$root/${PostacMasterDiagnosticLayers.FILTERED_MASK_FILE}",
+                    renderMaskObservation(output, output.observation),
+                    recycleAfter = true
+                )
+                zip.putSilhouetteBitmap(
+                    "$root/03_pose_accepted.png",
                     renderSilhouetteDiagnosticBitmap(
                         output,
                         SilhouetteOverlayVisibility(mask = false, pose = true, sections = false)
@@ -73,7 +80,7 @@ suspend fun exportSilhouetteDiagnostics(
                     recycleAfter = true
                 )
                 zip.putSilhouetteBitmap(
-                    "$root/04_sections.png",
+                    "$root/04_sections_accepted.png",
                     renderSilhouetteDiagnosticBitmap(
                         output,
                         SilhouetteOverlayVisibility(mask = false, pose = false, sections = true)
@@ -81,10 +88,27 @@ suspend fun exportSilhouetteDiagnostics(
                     recycleAfter = true
                 )
                 zip.putSilhouetteBitmap(
-                    "$root/05_combined.png",
+                    "$root/05_combined_accepted.png",
                     renderSilhouetteDiagnosticBitmap(output, visibility),
                     recycleAfter = true
                 )
+                zip.putSilhouetteText(
+                    "$root/${PostacMasterDiagnosticLayers.MANIFEST_FILE}",
+                    diagnosticManifestJson(output, layers).toString(2)
+                )
+                zip.putSilhouetteText(
+                    "$root/${PostacMasterDiagnosticLayers.RAW_GEOMETRY_FILE}",
+                    observationLayerJson("RAW", layers.raw).toString(2)
+                )
+                zip.putSilhouetteText(
+                    "$root/${PostacMasterDiagnosticLayers.FILTERED_GEOMETRY_FILE}",
+                    observationLayerJson("FILTERED", layers.filtered).toString(2)
+                )
+                zip.putSilhouetteText(
+                    "$root/${PostacMasterDiagnosticLayers.ACCEPTED_GEOMETRY_FILE}",
+                    acceptedLayerJson(layers).toString(2)
+                )
+                // Legacy file retained for compatibility; it contains accepted geometry only.
                 zip.putSilhouetteText(
                     "$root/silhouette_result.json",
                     silhouetteResultJson(output).toString(2)
@@ -103,8 +127,42 @@ suspend fun exportSilhouetteDiagnostics(
     }
 }
 
+private fun SilhouetteLabRunOutput.toDiagnosticLayers(): PostacMasterDiagnosticLayers {
+    val accepted = observation.takeUnless { status == SilhouetteVisualStatus.FAILED }
+    val rejectionCodes = regionCapabilities
+        .filterNot(SilhouetteRegionCapability::available)
+        .mapTo(linkedSetOf()) { capability ->
+            capability.reason ?: "REGION_BLOCKED:${capability.regionId}"
+        }
+    return PostacMasterDiagnosticLayers.fromBody(
+        raw = rawObservation,
+        filtered = filteredObservation,
+        accepted = accepted,
+        rejectionCodes = rejectionCodes
+    )
+}
+
 fun renderSilhouetteDiagnosticBitmap(
     output: SilhouetteLabRunOutput,
+    visibility: SilhouetteOverlayVisibility
+): Bitmap = renderSilhouetteScene(
+    output = output,
+    scene = output.overlayScene,
+    visibility = visibility
+)
+
+private fun renderMaskObservation(
+    output: SilhouetteLabRunOutput,
+    observation: SubjectObservation
+): Bitmap = renderSilhouetteScene(
+    output = output,
+    scene = PortraitOverlaySceneBuilder.build(observation),
+    visibility = SilhouetteOverlayVisibility(mask = true, pose = false, sections = false)
+)
+
+private fun renderSilhouetteScene(
+    output: SilhouetteLabRunOutput,
+    scene: PortraitOverlayScene,
     visibility: SilhouetteOverlayVisibility
 ): Bitmap {
     val base = output.previewBitmap.copy(Bitmap.Config.ARGB_8888, true)
@@ -119,7 +177,7 @@ fun renderSilhouetteDiagnosticBitmap(
     val stroke = (base.width / 420f).coerceIn(2f, 8f)
 
     if (visibility.mask) {
-        output.overlayScene.masks.forEach { overlay ->
+        scene.masks.forEach { overlay ->
             val bitmap = overlay.mask.toSilhouetteMaskBitmap()
             canvas.drawBitmap(
                 bitmap,
@@ -137,7 +195,7 @@ fun renderSilhouetteDiagnosticBitmap(
     }
 
     if (visibility.pose) {
-        output.overlayScene.polylines
+        scene.polylines
             .filter { it.id.startsWith("derived_body_skeleton_") }
             .forEach { polyline ->
                 drawSilhouettePolyline(
@@ -151,7 +209,7 @@ fun renderSilhouetteDiagnosticBitmap(
                     }
                 )
             }
-        output.overlayScene.points
+        scene.points
             .filter { it.backend == ObservationBackend.ML_KIT_POSE }
             .forEach { point ->
                 val mapped = transform.normalizedToPreview(point.position)
@@ -172,8 +230,11 @@ fun renderSilhouetteDiagnosticBitmap(
     }
 
     if (visibility.sections) {
-        output.overlayScene.polylines
-            .filter { it.id.startsWith("derived_body_") && !it.id.startsWith("derived_body_skeleton_") }
+        scene.polylines
+            .filter {
+                it.id.startsWith("derived_body_") &&
+                    !it.id.startsWith("derived_body_skeleton_")
+            }
             .forEach { polyline ->
                 drawSilhouettePolyline(
                     canvas,
@@ -195,7 +256,11 @@ fun buildSilhouetteTextReport(output: SilhouetteLabRunOutput): String = buildStr
     appendLine("status=${output.status.name}")
     appendLine("subject_count=${output.observation.subjectCount}")
     appendLine("body_count=${output.observation.bodyCount}")
-    appendLine("pose_landmarks=${output.observation.landmarks.values.count { it.backend == ObservationBackend.ML_KIT_POSE }}")
+    appendLine(
+        "pose_landmarks=" + output.observation.landmarks.values.count {
+            it.backend == ObservationBackend.ML_KIT_POSE
+        }
+    )
     appendLine("masks=${output.observation.masks.size}")
     appendLine("derived_regions=${output.enrichment.derivedRegionIds.size}")
     output.regionCapabilities.forEach { region ->
@@ -214,9 +279,54 @@ fun buildSilhouetteTextReport(output: SilhouetteLabRunOutput): String = buildStr
     output.runtimeLog.forEach(::appendLine)
 }
 
-private fun silhouetteResultJson(output: SilhouetteLabRunOutput): JSONObject {
+private fun diagnosticManifestJson(
+    output: SilhouetteLabRunOutput,
+    layers: PostacMasterDiagnosticLayers
+): JSONObject = JSONObject()
+    .put("diagnosticSchema", "POSTAC_MASTER_DIAGNOSTICS_V2")
+    .put("layerContract", layers.contractVersion)
+    .put("state", layers.state.name)
+    .put("rejectionCodes", JSONArray(layers.rejectionCodes.sorted()))
+    .put("requiredFiles", JSONArray(PostacMasterDiagnosticLayers.REQUIRED_EXPORT_FILES.toList()))
+    .put("buildBranch", BuildConfig.POSTAC_MASTER_BUILD_BRANCH)
+    .put("buildCommit", BuildConfig.POSTAC_MASTER_BUILD_COMMIT)
+    .put("status", output.status.name)
+    .put("counts", countsJson(layers.counts))
+    .put("deformationEnabled", false)
+
+private fun countsJson(counts: PostacMasterDiagnosticLayers.Counts): JSONObject = JSONObject()
+    .put("rawLandmarks", counts.rawLandmarks)
+    .put("filteredLandmarks", counts.filteredLandmarks)
+    .put("acceptedLandmarks", counts.acceptedLandmarks)
+    .put("rawContours", counts.rawContours)
+    .put("filteredContours", counts.filteredContours)
+    .put("acceptedContours", counts.acceptedContours)
+    .put("rawTriangles", counts.rawTriangles)
+    .put("filteredTriangles", counts.filteredTriangles)
+    .put("acceptedTriangles", counts.acceptedTriangles)
+    .put("rawMasks", counts.rawMasks)
+    .put("filteredMasks", counts.filteredMasks)
+    .put("acceptedMasks", counts.acceptedMasks)
+
+private fun acceptedLayerJson(layers: PostacMasterDiagnosticLayers): JSONObject = JSONObject()
+    .put("layer", "ACCEPTED")
+    .put("state", layers.state.name)
+    .put("rejectionCodes", JSONArray(layers.rejectionCodes.sorted()))
+    .put(
+        "observation",
+        layers.accepted?.let(::subjectObservationJson) ?: JSONObject.NULL
+    )
+
+private fun observationLayerJson(
+    layer: String,
+    observation: SubjectObservation
+): JSONObject = JSONObject()
+    .put("layer", layer)
+    .put("observation", subjectObservationJson(observation))
+
+private fun subjectObservationJson(observation: SubjectObservation): JSONObject {
     val landmarks = JSONArray()
-    output.observation.landmarks.values.sortedBy { it.id }.forEach { landmark ->
+    observation.landmarks.values.sortedBy { it.id }.forEach { landmark ->
         landmarks.put(
             JSONObject()
                 .put("id", landmark.id)
@@ -224,43 +334,83 @@ private fun silhouetteResultJson(output: SilhouetteLabRunOutput): JSONObject {
                 .put("y", landmark.point.y)
                 .put("z", landmark.point.z ?: JSONObject.NULL)
                 .put("confidence", landmark.confidence ?: JSONObject.NULL)
+                .put("confidenceSource", landmark.confidenceSource.name)
                 .put("visibility", landmark.visibility.name)
                 .put("backend", landmark.backend.name)
         )
     }
-    val capabilities = JSONArray()
-    output.regionCapabilities.forEach { region ->
-        capabilities.put(
+    val contours = JSONArray()
+    observation.contours.values.sortedBy { it.id }.forEach { contour ->
+        contours.put(
             JSONObject()
-                .put("regionId", region.regionId)
-                .put("available", region.available)
-                .put("reason", region.reason ?: JSONObject.NULL)
+                .put("id", contour.id)
+                .put("closed", contour.closed)
+                .put("backend", contour.backend.name)
+                .put("vertexIds", JSONArray(contour.vertexIds))
         )
     }
-    val skipped = JSONArray()
-    output.enrichment.skippedSections.forEach { section ->
-        skipped.put(
+    val meshes = JSONArray()
+    observation.meshes.values.sortedBy { it.id }.forEach { mesh ->
+        val triangles = JSONArray()
+        mesh.triangles.forEach { triangle ->
+            triangles.put(
+                JSONObject()
+                    .put("first", triangle.firstVertexId)
+                    .put("second", triangle.secondVertexId)
+                    .put("third", triangle.thirdVertexId)
+            )
+        }
+        meshes.put(
             JSONObject()
-                .put("sectionId", section.sectionId)
-                .put("reason", section.reason.name)
-                .put("itemId", section.itemId ?: JSONObject.NULL)
+                .put("id", mesh.id)
+                .put("backend", mesh.backend.name)
+                .put("vertexIds", JSONArray(mesh.vertexIds.sorted()))
+                .put("triangles", triangles)
+        )
+    }
+    val masks = JSONArray()
+    observation.masks.values.sortedBy { it.id }.forEach { mask ->
+        masks.put(
+            JSONObject()
+                .put("id", mask.id)
+                .put("backend", mask.backend.name)
+                .put("width", mask.mask.width)
+                .put("height", mask.mask.height)
         )
     }
     return JSONObject()
-        .put("mode", "B1_SILHOUETTE_OBSERVATION")
-        .put("status", output.status.name)
-        .put("sourceWidth", output.sourceMetadata.orientedWidth)
-        .put("sourceHeight", output.sourceMetadata.orientedHeight)
-        .put("subjectCount", output.observation.subjectCount)
-        .put("bodyCount", output.observation.bodyCount)
+        .put("subjectCount", observation.subjectCount)
+        .put("faceCount", observation.faceCount)
+        .put("bodyCount", observation.bodyCount)
         .put("landmarks", landmarks)
-        .put("maskIds", JSONArray(output.observation.masks.keys.sorted()))
-        .put("derivedRegionIds", JSONArray(output.enrichment.derivedRegionIds.sorted()))
-        .put("regionCapabilities", capabilities)
-        .put("skippedSections", skipped)
-        .put("visibleSilhouetteIncludesClothing", true)
-        .put("deformationEnabled", false)
+        .put("contours", contours)
+        .put("meshes", meshes)
+        .put("masks", masks)
+        .put("regionIds", JSONArray(observation.regions.keys.sorted()))
 }
+
+private fun silhouetteResultJson(output: SilhouetteLabRunOutput): JSONObject = JSONObject()
+    .put("mode", "B1_SILHOUETTE_OBSERVATION")
+    .put("status", output.status.name)
+    .put("sourceWidth", output.sourceMetadata.orientedWidth)
+    .put("sourceHeight", output.sourceMetadata.orientedHeight)
+    .put("acceptedObservation", subjectObservationJson(output.observation))
+    .put("derivedRegionIds", JSONArray(output.enrichment.derivedRegionIds.sorted()))
+    .put(
+        "regionCapabilities",
+        JSONArray().apply {
+            output.regionCapabilities.forEach { region ->
+                put(
+                    JSONObject()
+                        .put("regionId", region.regionId)
+                        .put("available", region.available)
+                        .put("reason", region.reason ?: JSONObject.NULL)
+                )
+            }
+        }
+    )
+    .put("visibleSilhouetteIncludesClothing", true)
+    .put("deformationEnabled", false)
 
 private fun drawSilhouettePolyline(
     canvas: Canvas,

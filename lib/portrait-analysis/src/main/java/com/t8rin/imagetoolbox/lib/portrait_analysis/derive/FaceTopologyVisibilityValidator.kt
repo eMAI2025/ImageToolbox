@@ -13,6 +13,7 @@ import com.t8rin.imagetoolbox.lib.portrait_analysis.model.NormalizedPoint3D
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.SubjectObservation
 import kotlin.math.abs
 import kotlin.math.hypot
+import kotlin.math.max
 
 /**
  * Validates candidate face topology after visible-side filtering and before active overlay routing.
@@ -23,11 +24,19 @@ import kotlin.math.hypot
  */
 object FaceTopologyVisibilityValidator {
 
-    const val FINGERPRINT = "POSTAC_MASTER_FACE_TOPOLOGY_VISIBILITY_V1"
+    const val FINGERPRINT = "POSTAC_MASTER_FACE_TOPOLOGY_VISIBILITY_V2"
 
     // Structural discontinuity ceiling relative to the detected face diagonal. This is a generic
     // topology invariant, not a value tuned against one photograph.
     const val MAXIMUM_SEGMENT_TO_FACE_DIAGONAL = 0.75f
+
+    /**
+     * Frontal ML Kit contours may sit marginally outside the detector bbox because the bbox and
+     * contour proposal are produced by different heads. The tolerance matches the existing 2%
+     * face-bounds policy and is applied only to frontal support checks. Partial/profile geometry
+     * keeps exact bounds plus the visible-side corridor and therefore remains fail-closed.
+     */
+    const val FRONTAL_BOUNDS_TOLERANCE_FACTOR = 0.02f
 
     data class Metrics(
         val checkedContourCount: Int,
@@ -152,6 +161,11 @@ object FaceTopologyVisibilityValidator {
         val height: Float get() = (bottom - top).coerceAtLeast(0f)
         val diagonal: Float get() = hypot(width, height)
         val centerX: Float get() = (left + right) / 2f
+        val maximumDimension: Float get() = max(width, height)
+
+        fun contains(point: NormalizedPoint3D, tolerance: Float = 0f): Boolean =
+            point.x in (left - tolerance)..(right + tolerance) &&
+                point.y in (top - tolerance)..(bottom + tolerance)
     }
 
     private data class Segment(
@@ -241,12 +255,19 @@ object FaceTopologyVisibilityValidator {
         awareness: FaceRegionAwareness,
         candidateObservation: SubjectObservation
     ): Boolean {
-        if (x !in bounds.left..bounds.right || y !in bounds.top..bounds.bottom) return true
+        val frontal = awareness.poseMode == FacePoseMode.FRONTAL
+        val boundsTolerance = if (frontal) {
+            bounds.maximumDimension * FRONTAL_BOUNDS_TOLERANCE_FACTOR
+        } else {
+            0f
+        }
+        if (!bounds.contains(this, boundsTolerance)) return true
+        if (frontal) return false
         if (
             awareness.poseMode != FacePoseMode.HALF_PROFILE &&
             awareness.poseMode != FacePoseMode.PROFILE
         ) {
-            return false
+            return true
         }
         val axisX = candidateObservation.landmarks.values
             .filter { landmark ->
