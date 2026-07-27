@@ -16,7 +16,9 @@ package com.t8rin.imagetoolbox.lib.portrait_analysis.derive
  */
 object PostacMasterPipelineUnlockContract {
 
-    const val FINGERPRINT = "POSTAC_MASTER_PIPELINE_UNLOCK_CONTRACT_V4"
+    const val FINGERPRINT = "POSTAC_MASTER_PIPELINE_UNLOCK_CONTRACT_V5"
+    const val EXPECTED_REPOSITORY = "eMAI2025/ImageToolbox"
+    const val EXPECTED_WORKFLOW_NAME = "POSTAC_MASTER A1 CI"
 
     enum class Module {
         BACKGROUND_REMOVAL,
@@ -31,6 +33,14 @@ object PostacMasterPipelineUnlockContract {
         READY_FOR_ISOLATED_ADAPTER
     }
 
+    enum class CiConclusion {
+        SUCCESS,
+        FAILURE,
+        CANCELLED,
+        SKIPPED,
+        UNKNOWN
+    }
+
     enum class Blocker {
         A1_DEVICE_PASS_MISSING,
         ITERATION_32_NOT_ACCEPTED,
@@ -39,9 +49,13 @@ object PostacMasterPipelineUnlockContract {
         ACCEPTED_EVIDENCE_MISSING,
         PROVENANCE_MISSING,
         PROVENANCE_MISMATCH,
-        MODULE_CONTRACT_NOT_GREEN,
+        MODULE_CI_ATTESTATION_MISSING,
+        MODULE_CI_ATTESTATION_INVALID,
+        MODULE_CI_HEAD_MISMATCH,
         MODULE_CONTRACT_FINGERPRINT_MISMATCH,
         UPSTREAM_MODULE_NOT_READY,
+        UPSTREAM_CI_ATTESTATION_INVALID,
+        UPSTREAM_CI_HEAD_MISMATCH,
         UPSTREAM_PROVENANCE_MISSING,
         UPSTREAM_PROVENANCE_MISMATCH,
         UPSTREAM_CONTRACT_FINGERPRINT_MISMATCH,
@@ -54,13 +68,25 @@ object PostacMasterPipelineUnlockContract {
     }
 
     /**
-     * Static proof that an upstream module passed its own contract on the same evidence lineage.
-     * A bare module enum or green boolean is insufficient without its exact contract fingerprint.
+     * Structured CI evidence bound to one repository, workflow and exact source head.
+     *
+     * This is an integrity contract, not a cryptographic verifier. The caller must populate it from
+     * the GitHub Actions API rather than from user-entered booleans.
      */
+    data class CiAttestation(
+        val repository: String,
+        val workflowName: String,
+        val workflowId: Long,
+        val runId: Long,
+        val runNumber: Long,
+        val headCommit: String,
+        val conclusion: CiConclusion
+    )
+
     data class UpstreamCapabilityEvidence(
         val module: Module,
-        val contractCiGreen: Boolean,
         val contractFingerprint: String,
+        val ciAttestation: CiAttestation?,
         val provenanceBranch: String,
         val provenanceCommit: String
     )
@@ -72,8 +98,8 @@ object PostacMasterPipelineUnlockContract {
         val rawEvidencePresent: Boolean,
         val filteredEvidencePresent: Boolean,
         val acceptedEvidencePresent: Boolean,
-        val moduleContractCiGreen: Boolean,
         val moduleContractFingerprint: String,
+        val moduleCiAttestation: CiAttestation?,
         val upstreamCapabilities: Set<UpstreamCapabilityEvidence>,
         val provenanceBranch: String,
         val provenanceCommit: String,
@@ -85,24 +111,24 @@ object PostacMasterPipelineUnlockContract {
         val requestsContentGeneration: Boolean = false
     )
 
-    /**
-     * Immutable static capability token. Besides the current module contract it records the exact
-     * upstream contract lineage that was used to unlock it. A later integration audit therefore
-     * does not need to trust an external declaration of which dependencies were proven.
-     */
     data class Capability internal constructor(
         val module: Module,
         val moduleContractFingerprint: String,
+        val moduleCiRunId: Long,
         val upstreamContractFingerprints: Map<Module, String>,
+        val upstreamCiRunIds: Map<Module, Long>,
         val provenanceBranch: String,
         val provenanceCommit: String,
         val fingerprint: String = FINGERPRINT
     ) {
         init {
             require(upstreamContractFingerprints.keys == requiredUpstream(module))
+            require(upstreamCiRunIds.keys == requiredUpstream(module))
             upstreamContractFingerprints.forEach { (upstream, contractFingerprint) ->
                 require(contractFingerprint == expectedContractFingerprint(upstream))
             }
+            require(moduleCiRunId > 0L)
+            require(upstreamCiRunIds.values.all { it > 0L })
         }
     }
 
@@ -140,7 +166,6 @@ object PostacMasterPipelineUnlockContract {
         if (!evidence.rawEvidencePresent) blockers += Blocker.RAW_EVIDENCE_MISSING
         if (!evidence.filteredEvidencePresent) blockers += Blocker.FILTERED_EVIDENCE_MISSING
         if (!evidence.acceptedEvidencePresent) blockers += Blocker.ACCEPTED_EVIDENCE_MISSING
-        if (!evidence.moduleContractCiGreen) blockers += Blocker.MODULE_CONTRACT_NOT_GREEN
         if (evidence.moduleContractFingerprint != expectedContractFingerprint(evidence.module)) {
             blockers += Blocker.MODULE_CONTRACT_FINGERPRINT_MISMATCH
         }
@@ -156,6 +181,18 @@ object PostacMasterPipelineUnlockContract {
             blockers += Blocker.PROVENANCE_MISMATCH
         }
 
+        val moduleAttestation = evidence.moduleCiAttestation
+        if (moduleAttestation == null) {
+            blockers += Blocker.MODULE_CI_ATTESTATION_MISSING
+        } else {
+            if (!isValidCiAttestation(moduleAttestation)) {
+                blockers += Blocker.MODULE_CI_ATTESTATION_INVALID
+            }
+            if (moduleAttestation.headCommit != evidence.provenanceCommit) {
+                blockers += Blocker.MODULE_CI_HEAD_MISMATCH
+            }
+        }
+
         val requiredUpstream = requiredUpstream(evidence.module)
         val capabilitiesByModule = evidence.upstreamCapabilities.groupBy { it.module }
         if (!capabilitiesByModule.keys.containsAll(requiredUpstream)) {
@@ -166,9 +203,7 @@ object PostacMasterPipelineUnlockContract {
         }
         requiredUpstream.forEach { module ->
             val candidates = capabilitiesByModule[module].orEmpty()
-            if (candidates.size != 1 || candidates.none { it.contractCiGreen }) {
-                blockers += Blocker.UPSTREAM_MODULE_NOT_READY
-            }
+            if (candidates.size != 1) blockers += Blocker.UPSTREAM_MODULE_NOT_READY
             candidates.forEach { capability ->
                 if (capability.contractFingerprint != expectedContractFingerprint(module)) {
                     blockers += Blocker.UPSTREAM_CONTRACT_FINGERPRINT_MISMATCH
@@ -184,6 +219,12 @@ object PostacMasterPipelineUnlockContract {
                 ) {
                     blockers += Blocker.UPSTREAM_PROVENANCE_MISMATCH
                 }
+                val attestation = capability.ciAttestation
+                if (attestation == null || !isValidCiAttestation(attestation)) {
+                    blockers += Blocker.UPSTREAM_CI_ATTESTATION_INVALID
+                } else if (attestation.headCommit != capability.provenanceCommit) {
+                    blockers += Blocker.UPSTREAM_CI_HEAD_MISMATCH
+                }
             }
         }
 
@@ -196,13 +237,17 @@ object PostacMasterPipelineUnlockContract {
             blockers += Blocker.CONTENT_GENERATION_REQUESTED
         }
 
-        val capability = if (blockers.isEmpty()) {
+        val capability = if (blockers.isEmpty() && moduleAttestation != null) {
             Capability(
                 module = evidence.module,
                 moduleContractFingerprint = evidence.moduleContractFingerprint,
+                moduleCiRunId = moduleAttestation.runId,
                 upstreamContractFingerprints = requiredUpstream.associateWith(
                     ::expectedContractFingerprint
                 ),
+                upstreamCiRunIds = requiredUpstream.associateWith { module ->
+                    requireNotNull(capabilitiesByModule.getValue(module).single().ciAttestation).runId
+                },
                 provenanceBranch = evidence.provenanceBranch,
                 provenanceCommit = evidence.provenanceCommit
             )
@@ -215,6 +260,15 @@ object PostacMasterPipelineUnlockContract {
             capability = capability
         )
     }
+
+    fun isValidCiAttestation(attestation: CiAttestation): Boolean =
+        attestation.repository == EXPECTED_REPOSITORY &&
+            attestation.workflowName == EXPECTED_WORKFLOW_NAME &&
+            attestation.workflowId > 0L &&
+            attestation.runId > 0L &&
+            attestation.runNumber > 0L &&
+            attestation.headCommit.isNotBlank() &&
+            attestation.conclusion == CiConclusion.SUCCESS
 
     fun expectedContractFingerprint(module: Module): String = when (module) {
         Module.BACKGROUND_REMOVAL -> BackgroundRemovalContract.FINGERPRINT
@@ -232,7 +286,6 @@ object PostacMasterPipelineUnlockContract {
         Module.PORTRAIT_FILTERS -> emptySet()
     }
 
-    /** Verifies completeness and acyclicity of the static module dependency graph. */
     fun dependencyGraphAssessment(): DependencyGraphAssessment {
         val modules = Module.entries.toSet()
         val dependencies = modules.associateWith(::requiredUpstream)
