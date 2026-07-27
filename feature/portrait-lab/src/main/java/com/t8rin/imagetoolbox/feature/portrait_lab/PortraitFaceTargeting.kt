@@ -63,14 +63,18 @@ data class PortraitFaceCandidate(
     val area: Float get() = bounds.width * bounds.height
 }
 
-fun extractPortraitFaceCandidates(output: PortraitLabRunOutput): List<PortraitFaceCandidate> =
-    output.observation.contours.values
+fun extractPortraitFaceCandidates(output: PortraitLabRunOutput): List<PortraitFaceCandidate> {
+    val candidateObservation = PortraitFaceDiagnosticRouting.candidateSource(
+        rawObservation = output.rawObservation,
+        activeObservation = output.observation
+    )
+    return candidateObservation.contours.values
         .asSequence()
         .filter { it.id.contains("bounding_box") || it.id.contains("bbox") }
         .mapNotNull { contour ->
             val faceIndex = faceIndexRegex.find(contour.id)?.groupValues?.getOrNull(1)?.toIntOrNull()
                 ?: return@mapNotNull null
-            val points = contour.vertexIds.mapNotNull(output.observation.landmarks::get)
+            val points = contour.vertexIds.mapNotNull(candidateObservation.landmarks::get)
                 .map(LandmarkObservation::point)
             val bounds = points.toNormalizedBounds() ?: return@mapNotNull null
             PortraitFaceCandidate(faceIndex, bounds)
@@ -78,11 +82,16 @@ fun extractPortraitFaceCandidates(output: PortraitLabRunOutput): List<PortraitFa
         .distinctBy(PortraitFaceCandidate::faceIndex)
         .sortedBy(PortraitFaceCandidate::faceIndex)
         .toList()
+}
 
 suspend fun focusPortraitOutput(
     output: PortraitLabRunOutput,
     candidate: PortraitFaceCandidate
 ): Result<PortraitLabRunOutput> = runCatching {
+    val candidateSource = PortraitFaceDiagnosticRouting.candidateSource(
+        rawObservation = output.rawObservation,
+        activeObservation = output.observation
+    )
     require(candidate.faceIndex in extractPortraitFaceCandidates(output).map { it.faceIndex }) {
         "Selected face is not present in the frozen detector result"
     }
@@ -90,7 +99,7 @@ suspend fun focusPortraitOutput(
     val crop = candidate.bounds.expandedForPortrait()
     val sourceCrop = output.sourceBitmap.cropNormalized(crop)
     val previewCrop = output.previewBitmap.cropNormalized(crop)
-    val selectedObservation = output.observation.focusOnFace(candidate.faceIndex, crop)
+    val selectedObservation = candidateSource.focusOnFace(candidate.faceIndex, crop)
     val regionAnalysis = FaceRegionAwarenessAnalyzer.analyzeAndEnrich(selectedObservation)
     val awareness = regionAnalysis.awareness
     val visibleGeometry = FaceVisibleGeometryFilter.filter(
@@ -169,13 +178,18 @@ suspend fun focusPortraitOutput(
         gateAcceptance
     }
     val focusedObservation = FaceGeometryAcceptanceGate.renderObservation(acceptance)
+    val diagnosticObservation = PortraitFaceDiagnosticRouting.visualProofObservation(
+        rawObservation = regionAnalysis.observation,
+        visibleObservation = visibleGeometry.observation,
+        fullFaceGeometryAllowed = awareness.fullFaceGeometryAllowed
+    )
     val transform = ImageRenderTransform.fit(
         sourceWidth = sourceCrop.width,
         sourceHeight = sourceCrop.height,
         previewWidth = previewCrop.width,
         previewHeight = previewCrop.height
     )
-    val visualProof = VisualProofEvaluator.evaluate(focusedObservation, transform)
+    val visualProof = VisualProofEvaluator.evaluate(diagnosticObservation, transform)
 
     output.copy(
         sourceBitmap = sourceCrop,
@@ -191,10 +205,10 @@ suspend fun focusPortraitOutput(
         dualPassConsistency = dualPassConsistency,
         roiObservationProvider = null,
         visualProof = visualProof,
-        overlayScene = PortraitOverlaySceneBuilder.build(focusedObservation),
+        overlayScene = PortraitOverlaySceneBuilder.build(diagnosticObservation),
         faceRegionAwareness = awareness,
         runtimeLog = output.runtimeLog + buildList {
-            add("source_face_count=${output.observation.faceCount}")
+            add("source_face_count=${candidateSource.faceCount}")
             add("active_face_index=${candidate.faceIndex}")
             add("active_face_mode=single_face_crop")
             add("analysis_crop_normalized=${crop.left},${crop.top},${crop.right},${crop.bottom}")
@@ -214,6 +228,10 @@ suspend fun focusPortraitOutput(
             add("p2_raw_triangles=${visibleGeometry.rawTriangleCount}")
             add("p2_visible_triangles=${visibleGeometry.visibleTriangleCount}")
             add("face_gate_fingerprint=${FaceGeometryAcceptanceGate.FINGERPRINT}")
+            add("face_diagnostic_routing_fingerprint=${PortraitFaceDiagnosticRouting.FINGERPRINT}")
+            add("face_diagnostic_layer=${if (awareness.fullFaceGeometryAllowed) "RAW_FRONTAL" else "VISIBLE_PARTIAL"}")
+            add("face_diagnostic_landmark_count=${diagnosticObservation.landmarks.size}")
+            add("face_diagnostic_contour_count=${diagnosticObservation.contours.size}")
             add("face_input_quality_fingerprint=${FaceInputQualityPolicy.FINGERPRINT}")
             add("face_input_quality_accepted=${inputQuality.accepted}")
             add("face_input_quality_reasons=${inputQuality.reasons.joinToString(",") { it.name }}")
@@ -257,13 +275,13 @@ suspend fun focusPortraitOutput(
             }
         },
         warnings = output.warnings + buildList {
-            if (output.observation.faceCount > 1) {
+            if (candidateSource.faceCount > 1) {
                 add(
-                    "The source contains ${output.observation.faceCount} faces. " +
+                    "The source contains ${candidateSource.faceCount} faces. " +
                         "Only face ${candidate.faceIndex + 1} is active; all other faces are ignored."
                 )
             }
-            if (output.observation.masks.isNotEmpty()) {
+            if (candidateSource.masks.isNotEmpty()) {
                 add("Semantic masks are omitted from the focused crop until mask cropping is implemented.")
             }
             if (!awareness.fullFaceGeometryAllowed) {
@@ -295,8 +313,8 @@ suspend fun focusPortraitOutput(
             }
             if (acceptance.activeObservation == null) {
                 add(
-                    "Face detected but geometry rejected. Active overlay is empty; raw detector " +
-                        "evidence is retained separately. Reasons: " +
+                    "Face detected but edit geometry rejected. Diagnostic detector geometry remains visible " +
+                        "in P1 visual proof and raw evidence is retained separately. Reasons: " +
                         acceptance.reasons.joinToString { it.name }
                 )
             }
