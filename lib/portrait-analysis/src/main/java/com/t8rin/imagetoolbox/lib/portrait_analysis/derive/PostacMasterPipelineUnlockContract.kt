@@ -16,7 +16,7 @@ package com.t8rin.imagetoolbox.lib.portrait_analysis.derive
  */
 object PostacMasterPipelineUnlockContract {
 
-    const val FINGERPRINT = "POSTAC_MASTER_PIPELINE_UNLOCK_CONTRACT_V3"
+    const val FINGERPRINT = "POSTAC_MASTER_PIPELINE_UNLOCK_CONTRACT_V4"
 
     enum class Module {
         BACKGROUND_REMOVAL,
@@ -46,6 +46,7 @@ object PostacMasterPipelineUnlockContract {
         UPSTREAM_PROVENANCE_MISMATCH,
         UPSTREAM_CONTRACT_FINGERPRINT_MISMATCH,
         UNDECLARED_UPSTREAM_CAPABILITY,
+        DEPENDENCY_GRAPH_INVALID,
         PRODUCTION_ACTIVATION_REQUESTED,
         FINAL_UI_REQUESTED,
         DEFORMATION_REQUESTED,
@@ -84,13 +85,26 @@ object PostacMasterPipelineUnlockContract {
         val requestsContentGeneration: Boolean = false
     )
 
+    /**
+     * Immutable static capability token. Besides the current module contract it records the exact
+     * upstream contract lineage that was used to unlock it. A later integration audit therefore
+     * does not need to trust an external declaration of which dependencies were proven.
+     */
     data class Capability internal constructor(
         val module: Module,
         val moduleContractFingerprint: String,
+        val upstreamContractFingerprints: Map<Module, String>,
         val provenanceBranch: String,
         val provenanceCommit: String,
         val fingerprint: String = FINGERPRINT
-    )
+    ) {
+        init {
+            require(upstreamContractFingerprints.keys == requiredUpstream(module))
+            upstreamContractFingerprints.forEach { (upstream, contractFingerprint) ->
+                require(contractFingerprint == expectedContractFingerprint(upstream))
+            }
+        }
+    }
 
     data class Decision internal constructor(
         val status: Status,
@@ -111,8 +125,16 @@ object PostacMasterPipelineUnlockContract {
         }
     }
 
+    data class DependencyGraphAssessment(
+        val valid: Boolean,
+        val cyclicModules: Set<Module>,
+        val selfDependentModules: Set<Module>,
+        val unknownDependencyModules: Set<Module>
+    )
+
     fun evaluate(evidence: Evidence): Decision {
         val blockers = linkedSetOf<Blocker>()
+        if (!dependencyGraphAssessment().valid) blockers += Blocker.DEPENDENCY_GRAPH_INVALID
         if (!evidence.a1DevicePass) blockers += Blocker.A1_DEVICE_PASS_MISSING
         if (!evidence.iteration32Accepted) blockers += Blocker.ITERATION_32_NOT_ACCEPTED
         if (!evidence.rawEvidencePresent) blockers += Blocker.RAW_EVIDENCE_MISSING
@@ -178,6 +200,9 @@ object PostacMasterPipelineUnlockContract {
             Capability(
                 module = evidence.module,
                 moduleContractFingerprint = evidence.moduleContractFingerprint,
+                upstreamContractFingerprints = requiredUpstream.associateWith(
+                    ::expectedContractFingerprint
+                ),
                 provenanceBranch = evidence.provenanceBranch,
                 provenanceCommit = evidence.provenanceCommit
             )
@@ -205,5 +230,32 @@ object PostacMasterPipelineUnlockContract {
         Module.CLOTHING_CHANGE -> setOf(Module.BACKGROUND_REMOVAL)
         Module.SILHOUETTE_EDIT -> setOf(Module.BACKGROUND_REMOVAL)
         Module.PORTRAIT_FILTERS -> emptySet()
+    }
+
+    /** Verifies completeness and acyclicity of the static module dependency graph. */
+    fun dependencyGraphAssessment(): DependencyGraphAssessment {
+        val modules = Module.entries.toSet()
+        val dependencies = modules.associateWith(::requiredUpstream)
+        val selfDependent = dependencies.filter { (module, upstream) -> module in upstream }.keys
+        val unknown = dependencies.values.flatten().filterNot { it in modules }.toSet()
+        val cyclic = linkedSetOf<Module>()
+
+        fun visit(module: Module, path: LinkedHashSet<Module>) {
+            if (module in path) {
+                cyclic += module
+                cyclic += path.dropWhile { it != module }
+                return
+            }
+            val nextPath = LinkedHashSet(path).apply { add(module) }
+            dependencies.getValue(module).forEach { visit(it, nextPath) }
+        }
+        modules.forEach { visit(it, linkedSetOf()) }
+
+        return DependencyGraphAssessment(
+            valid = selfDependent.isEmpty() && unknown.isEmpty() && cyclic.isEmpty(),
+            cyclicModules = cyclic,
+            selfDependentModules = selfDependent,
+            unknownDependencyModules = unknown
+        )
     }
 }
