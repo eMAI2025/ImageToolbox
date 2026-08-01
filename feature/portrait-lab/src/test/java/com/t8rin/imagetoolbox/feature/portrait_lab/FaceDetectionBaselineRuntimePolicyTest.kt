@@ -8,9 +8,11 @@
 
 package com.t8rin.imagetoolbox.feature.portrait_lab
 
+import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ConfidenceSource
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ContourObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.LandmarkObservation
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.NormalizedPoint3D
+import com.t8rin.imagetoolbox.lib.portrait_analysis.model.ObservationBackend
 import com.t8rin.imagetoolbox.lib.portrait_analysis.model.SubjectObservation
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -79,31 +81,19 @@ class FaceDetectionBaselineRuntimePolicyTest {
                 val bottom = 0.42f
                 put(
                     "face_${faceIndex}_bbox_top_left",
-                    LandmarkObservation(
-                        id = "face_${faceIndex}_bbox_top_left",
-                        point = NormalizedPoint3D(left, top)
-                    )
+                    point("face_${faceIndex}_bbox_top_left", left, top)
                 )
                 put(
                     "face_${faceIndex}_bbox_top_right",
-                    LandmarkObservation(
-                        id = "face_${faceIndex}_bbox_top_right",
-                        point = NormalizedPoint3D(right, top)
-                    )
+                    point("face_${faceIndex}_bbox_top_right", right, top)
                 )
                 put(
                     "face_${faceIndex}_bbox_bottom_right",
-                    LandmarkObservation(
-                        id = "face_${faceIndex}_bbox_bottom_right",
-                        point = NormalizedPoint3D(right, bottom)
-                    )
+                    point("face_${faceIndex}_bbox_bottom_right", right, bottom)
                 )
                 put(
                     "face_${faceIndex}_bbox_bottom_left",
-                    LandmarkObservation(
-                        id = "face_${faceIndex}_bbox_bottom_left",
-                        point = NormalizedPoint3D(left, bottom)
-                    )
+                    point("face_${faceIndex}_bbox_bottom_left", left, bottom)
                 )
             }
         }
@@ -119,7 +109,10 @@ class FaceDetectionBaselineRuntimePolicyTest {
                             "face_${faceIndex}_bbox_bottom_right",
                             "face_${faceIndex}_bbox_bottom_left"
                         ),
-                        closed = true
+                        closed = true,
+                        confidence = null,
+                        confidenceSource = ConfidenceSource.UNAVAILABLE,
+                        backend = ObservationBackend.ML_KIT_FACE_DETECTION
                     )
                 )
             }
@@ -127,8 +120,22 @@ class FaceDetectionBaselineRuntimePolicyTest {
         return SubjectObservation(
             subjectCount = count,
             faceCount = count,
+            bodyCount = 0,
             landmarks = landmarks,
+            regions = emptyMap(),
             contours = contours
         )
     }
+
+    private fun point(
+        id: String,
+        x: Float,
+        y: Float
+    ) = LandmarkObservation(
+        id = id,
+        point = NormalizedPoint3D(x, y),
+        confidence = null,
+        confidenceSource = ConfidenceSource.UNAVAILABLE,
+        backend = ObservationBackend.ML_KIT_FACE_DETECTION
+    )
 }
